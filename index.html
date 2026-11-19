@@ -441,14 +441,15 @@ function saveF(f){ f=nf(f); const i=formations.findIndex(x=>x.id===f.id); const 
 function delF(id){ formations=formations.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("formations").doc(id).delete()); }
 function saveV(v){ if(!v.createdBy && ME()) v=({...v,createdBy:ME().uid}); const i=visites.findIndex(x=>x.id===v.id); if(i>=0) visites[i]=v; else visites.push(v); renderAll();
   if(db) enqueue(v.id, ()=>db.collection("visites").doc(v.id).set(clean(v))); }
-function saveM(m){ if(!m.createdBy && ME()) m={...m,createdBy:ME().uid}; m={...m,depenses:m.depenses||[]};
+function saveM(m){ if(!m.createdBy && ME()) m={...m,createdBy:ME().uid}; m={...m,depenses:m.depenses||[],appros:m.appros||[]};
   const i=missions.findIndex(x=>x.id===m.id), old=i>=0?missions[i]:null; if(i>=0) missions[i]=m; else missions.push(m); renderAll();
   if(!db) return;
-  if(db.arrayOps && old){ const path="missions/"+m.id, oi=new Set((old.depenses||[]).map(d=>JSON.stringify(d))), ni=new Set(m.depenses.map(d=>JSON.stringify(d)));
-    const {depenses:_a,...rest}=clean(m), {depenses:_b,...restOld}=clean(old);
+  if(db.arrayOps && old){ const path="missions/"+m.id, ARR=["depenses","appros"];
+    const rest=clean(m), restOld=clean(old); ARR.forEach(k=>{ delete rest[k]; delete restOld[k]; });
     if(JSON.stringify(rest)!==JSON.stringify(restOld)) db.arrayOps.merge(path,rest);
-    for(const d of m.depenses) if(!oi.has(JSON.stringify(d))) db.arrayOps.add(path,"depenses",JSON.parse(JSON.stringify(d)));
-    for(const d of (old.depenses||[])) if(!ni.has(JSON.stringify(d))) db.arrayOps.remove(path,"depenses",JSON.parse(JSON.stringify(d)));
+    for(const k of ARR){ const oi=new Set((old[k]||[]).map(d=>JSON.stringify(d))), ni=new Set((m[k]||[]).map(d=>JSON.stringify(d)));
+      for(const d of (m[k]||[])) if(!oi.has(JSON.stringify(d))) db.arrayOps.add(path,k,JSON.parse(JSON.stringify(d)));
+      for(const d of (old[k]||[])) if(!ni.has(JSON.stringify(d))) db.arrayOps.remove(path,k,JSON.parse(JSON.stringify(d))); }
     return; }
   enqueue(m.id, ()=>db.collection("missions").doc(m.id).set(clean(m))); }
 function delM(id){ missions=missions.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("missions").doc(id).delete()); }
@@ -577,7 +578,9 @@ $("#profBtn").onclick=async()=>{
     <div class="mt"><label>Fonction</label><input id="prFonc" value="${esc(p.fonction||"")}" placeholder="ex. Commercial terrain"></div>
     <div class="mt"><label>Contact</label><input id="prTel" inputmode="tel" value="${esc(p.contact||"")}"></div>
     <div class="mt"><label>Zone</label><input id="prZone" value="${esc(p.zone||"")}" placeholder="ex. Centre-Ouest"></div>
-    <div class="mt"><label>Directeur Général (fiche des dépenses)</label><input id="prDG" value="${esc(p.dg??DG_DEFAUT)}"></div>
+    <div class="mt"><label>N° de carte (approvisionnement)</label><input id="prCarte" value="${esc(p.carte||"")}"></div>
+    <div class="mt"><label>Directeur Général</label><input id="prDG" value="${esc(p.dg||DG_DEFAUT)}"></div>
+    <div class="mt"><label>Pied de page des documents (adresse PhytoTop)</label><textarea id="prFoot" style="min-height:96px;font-size:12.5px">${esc(p.footer||FOOTER_DEFAUT)}</textarea></div>
     <div class="mt"><label>Ma signature (signe avec le doigt dans le cadre)</label>
       <canvas id="sigC" width="600" height="200" style="width:100%;aspect-ratio:3/1;border:1.5px dashed #9aa79c;border-radius:9px;background:#fff;touch-action:none;display:block"></canvas>
       <div class="actions" style="margin-top:8px"><button class="btn ghost sm" id="sigClr">Effacer</button><label class="btn ghost sm" style="margin:0;color:var(--g2)">📷 Importer une photo<input type="file" id="sigFile" accept="image/*" hidden></label></div>
@@ -637,7 +640,7 @@ $("#profBtn").onclick=async()=>{
     for(const m of (data.missions||[])) if(m&&m.id) saveM(m);
     for(const ph of (data.photos||[])){ if(!ph||!ph.id||!ph.parent) continue; const {id,...b}=ph; try{ if(db) await phCol(ph.parent).doc(id).set(b); else memPhotos.push(ph); }catch(e){ console.error(e); } }
     toast("Sauvegarde importée ✓"); };
-  $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),dg:val("prDG"),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
+  $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),dg:val("prDG"),carte:val("prCarte"),footer:document.getElementById("prFoot").value.trim(),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
 };
 
 // ================= FORMATIONS =================
@@ -927,23 +930,45 @@ function renderVisitDetail(){
 }
 
 // ================= MISSIONS =================
-const CATS=["Carburant","Frais de séjour","Hébergement","Restauration","Transport","Péage / Taxes","Communication","Réparation / Entretien","Fournitures","Autre"];
-// rubriques de la fiche "Justificatif des dépenses de missions"
-const SECTION = c => c==="Carburant" ? 0 : (["Frais de séjour","Hébergement","Restauration"].includes(c) ? 1 : 2);
-const DG_DEFAUT = "NZI CLAUDE BERNARD";
-const PAIES=["Espèces","Mobile Money","Carte","Chèque","Virement"];
+// Documents PhytoTop : Ordre de mission, Rapport de mission, Justificatif des dépenses, Demande d'approvisionnement
+const RUBS=["Carburant véhicule","Frais de séjour","Diverses dépenses"];
+const CARBS=["Gasoil","Super","Essence","Pétrole","Mélange 2 temps"];
+const DG_DEFAUT="N'ZI CLAUDE BERNARD";
+const FOOTER_DEFAUT=[
+  "COCODY Riviéra Palmeraie, Rond Point ADO - Capital Social : 100.000.000 FCFA - 01 BP 420 ABIDJAN 01",
+  "Tél.: (+225) 27 22 49 22 83 - Cel.: 07 58 94 93 10 - E-mail: phytotop@phytotop.net - Site web: www.phytotop.net - Facebook: Phytotop",
+  "R.C: CI-ABJ-2011-B-3076 - Compte Contribuable: 1109767 R - Régime Imposition: Réel Normal",
+  "Compte Bancaire BICICI ABJ SUD N°: CI006 01561 011378400050 08 - BACI Trigone N°: CI034 01040 013266550007 41"].join("\n");
+const CAMELEON="data:image/jpeg;base64,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"; const CAM_R=309/204;
 const money = n => String(Math.round(Number(n)||0)).replace(/\B(?=(\d{3})+(?!\d))/g," ")+" FCFA";
-const num = s => Number(String(s||"").replace(/[^\d.,-]/g,"").replace(",","."))||0;
+const amt = n => (Number(n)||0) ? String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g," ") : "";
+const num = s => Number(String(s??"").replace(/\s/g,"").replace(/[^\d.,-]/g,"").replace(",","."))||0;
+const rubOf = d => d.rub ?? (d.cat==="Carburant"?0:(["Frais de séjour","Hébergement","Restauration"].includes(d.cat)?1:2));
 const totalDep = m => (m.depenses||[]).reduce((s,d)=>s+num(d.montant),0);
-const nbJours = m => (m.depart&&m.retour) ? Math.round((new Date(m.retour)-new Date(m.depart))/864e5)+1 : 0;
+const nbJours = (a,b) => (a&&b) ? Math.round((new Date(b)-new Date(a))/864e5)+1 : 0;
+const dgName = p => (p&&p.dg) || DG_DEFAUT;
+function enLettres(n){
+  n=Math.floor(Math.abs(Number(n)||0)); if(!n) return "zéro";
+  const U=["","un","deux","trois","quatre","cinq","six","sept","huit","neuf","dix","onze","douze","treize","quatorze","quinze","seize","dix-sept","dix-huit","dix-neuf"];
+  const D=["","dix","vingt","trente","quarante","cinquante","soixante","soixante","quatre-vingt","quatre-vingt"];
+  const sous100=x=>{ if(x<20) return U[x]; const d=Math.floor(x/10), u=x%10;
+    if(d===7||d===9){ const r=10+u; return D[d]+(d===7&&u===1?" et ":"-")+U[r]; }
+    if(u===0) return D[d]+(d===8?"s":""); return D[d]+(u===1&&d!==8?" et ":"-")+U[u]; };
+  const sous1000=x=>{ const c=Math.floor(x/100), r=x%100; let s="";
+    if(c) s=(c>1?U[c]+" ":"")+"cent"+(c>1&&!r?"s":""); if(r) s+=(s?" ":"")+sous100(r); return s; };
+  const parts=[[1e9,"milliard"],[1e6,"million"],[1e3,"mille"]]; let s="", rest=n;
+  for(const [v,name] of parts){ const q=Math.floor(rest/v); rest%=v; if(!q) continue;
+    if(v===1e3) s+=(q===1?"":sous1000(q).replace(/(cents|vingts)$/,s=>s.slice(0,-1))+" ")+"mille "; else s+=sous1000(q)+" "+name+(q>1?"s":"")+" "; }
+  if(rest) s+=sous1000(rest); return s.trim();
+}
 function activitesPendant(m){
   if(!m.depart) return [];
   const a=m.depart, b=m.retour||m.depart, out=[];
-  for(const f of formations){ const n=f.participants.filter(p=>p.date>=a&&p.date<=b).length; if(n || (f.date<=b && f.fin>=a && f.date>=a)) out.push(`${actLabel(f)} — ${f.localite}${f.lieu?" ("+f.lieu+")":""} : ${n} personne(s) touchée(s)`); }
-  for(const v of visites) if(v.date>=a && v.date<=b) out.push(`Visite plantation — ${v.planteur}${v.village?" ("+v.village+")":""}${v.cultures?" — "+v.cultures:""}`);
+  for(const f of formations){ const n=f.participants.filter(p=>p.date>=a&&p.date<=b).length; if(n) out.push(`${actLabel(f)} à ${f.localite}${f.lieu?" ("+f.lieu+")":""} : ${n} personne(s) touchée(s)${f.theme?" — thème : "+f.theme:""}`); }
+  for(const v of visites) if(v.date>=a && v.date<=b) out.push(`Visite plantation chez ${v.planteur}${v.village?" ("+v.village+")":""}${v.cultures?" — "+v.cultures:""}`);
   return out;
 }
-let mMonth=today().slice(0,7), mOpen=null, mEdit=null;
+let mMonth=today().slice(0,7), mOpen=null, mEdit=null, dRub=0;
 
 function renderMissions(){
   const S=$("#tab-missions");
@@ -956,18 +981,18 @@ function renderMissions(){
   <div class="card">
     <div class="row"><div><label>Mois</label><input type="month" id="mMonth" value="${esc(mMonth)}"></div></div>
     <div class="stats" style="margin-top:12px"><div class="stat"><b>${list.length}</b><span>missions</span></div><div class="stat"><b>${money(tot)}</b><span>dépenses du mois</span></div></div>
-    <div class="actions" style="margin-top:12px"><button class="btn sec" id="mPdfM">⬇ PDF du mois</button><button class="btn ghost" id="mXlsM">⬇ Excel des dépenses</button></div>
+    <div class="actions" style="margin-top:12px"><button class="btn sec" id="mPdfM">⬇ Dossiers du mois (PDF)</button><button class="btn ghost" id="mXlsM">⬇ Excel des dépenses</button></div>
   </div>
   <div class="card flist">${list.length?list.map(m=>`
     <div class="item" data-id="${esc(m.id)}">
-      <div><div class="t">${esc(m.objet||"Mission")} <span class="muted">· ${esc(m.destination||"")}</span></div>
-      <div class="muted" style="margin-top:3px">${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)} · ${(m.depenses||[]).length} dépense(s)</div></div>
+      <div><div class="t">${esc(m.destination||"Mission")} <span class="muted">· ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)}</span></div>
+      <div class="muted" style="margin-top:3px">${esc(m.objet||"")} · ${(m.depenses||[]).length} dépense(s)</div></div>
       <div class="count" style="font-size:15px">${money(totalDep(m))}</div>
     </div>`).join(""):`<div class="empty">${loaded?"Aucune mission ce mois-ci.<br>Crée-en une avec « + Nouvelle mission ».":"Chargement…"}</div>`}</div>`;
   $("#mNew").onclick=()=>{ mEdit="new"; S.innerHTML=""; renderMissions(); window.scrollTo(0,0); };
   $("#mMonth").onchange=e=>{ mMonth=e.target.value; renderMissions(); };
   const sel=()=>missions.filter(m=>list.some(x=>x.id===m.id)).sort((a,b)=>(a.depart||"").localeCompare(b.depart||""));
-  $("#mPdfM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMissionsPdf(sel(), `Missions_${mMonth||"toutes"}.pdf`); };
+  $("#mPdfM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMission(sel(),"tout",`Missions_${mMonth||"toutes"}.pdf`); };
   $("#mXlsM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMissionsXls(sel()); };
   S.querySelectorAll(".item").forEach(it=>it.onclick=()=>{ mOpen=it.dataset.id; renderMissions(); window.scrollTo(0,0); });
 }
@@ -977,28 +1002,35 @@ function missionEditor(m){
   return `<div id="mForm"><button class="back" id="mBack">‹ Retour</button>
   <div class="card">
     <div class="head"><h2>${m.id?"Modifier la mission":"Nouvelle mission"}</h2></div>
-    <div class="row"><div><label>Objet de la mission *</label><input id="mObj" value="${esc(m.objet||"")}" placeholder="ex. Tournée de formation revendeurs"></div></div>
-    <div class="row mt"><div><label>Destination / itinéraire *</label><input id="mDest" value="${esc(m.destination||"")}" placeholder="ex. Gagnoa - Diégonéfla - Oumé"></div></div>
+    <h3>Ordre de mission</h3>
+    <div class="row">
+      <div><label>Ordonnateur (nom et prénom)</label><input id="mOrd" value="${esc(m.ordNom??dgName(p))}"></div>
+      <div><label>Fonction de l'ordonnateur</label><input id="mOrdF" value="${esc(m.ordFonc??"Directeur Général")}"></div>
+    </div>
+    <div class="row mt">
+      <div><label>Autorise Mr ou Mme</label><input id="mMis" value="${esc(m.missNom??p.nom??"")}"></div>
+      <div><label>Fonction</label><input id="mMisF" value="${esc(m.missFonc??p.fonction??"")}"></div>
+    </div>
+    <div class="row mt">
+      <div><label>Lieu(x) de la mission *</label><input id="mDest" value="${esc(m.destination||"")}" placeholder="ex. Sinfra, Oumé"></div>
+    </div>
     <div class="row mt">
       <div><label>Date de départ *</label><input type="date" id="mDep" value="${esc(m.depart||today())}"></div>
       <div><label>Date de retour</label><input type="date" id="mRet" value="${esc(m.retour||m.depart||today())}"></div>
     </div>
+    <div class="row mt"><div><label>Objet de la mission *</label><textarea id="mObj" style="min-height:52px" placeholder="ex. Formation producteurs et revendeurs et prospection dans la zone de Sinfra">${esc(m.objet||"")}</textarea></div></div>
     <div class="row mt">
-      <div><label>Moyen de transport</label><input id="mTrans" list="transList" value="${esc(m.transport||"")}"><datalist id="transList"><option value="Véhicule de service"><option value="Moto"><option value="Véhicule personnel"><option value="Transport en commun"></datalist></div>
-      <div><label>Véhicule (immatriculation)</label><input id="mVeh" value="${esc(m.vehicule||"")}"></div>
-    </div>
-    <div class="row mt">
-      <div><label>Km au départ</label><input id="mKm1" inputmode="numeric" value="${esc(m.kmDep||"")}"></div>
-      <div><label>Km au retour</label><input id="mKm2" inputmode="numeric" value="${esc(m.kmRet||"")}"></div>
+      <div><label>Fait à</label><input id="mFait" value="${esc(m.faitA??"Abidjan")}"></div>
+      <div><label>Date de l'ordre</label><input type="date" id="mDOrd" value="${esc(m.dateOrdre||m.depart||today())}"></div>
       <div><label>Frais de mission reçus (FCFA)</label><input id="mAv" inputmode="numeric" value="${esc(m.avance||"")}"></div>
     </div>
-    <div class="row mt"><div><label>Accompagnant(s)</label><input id="mAcc" value="${esc(m.accompagnants||"")}"></div></div>
     <h3>Rapport de mission</h3>
-    <label>Objectifs de la mission</label><textarea id="mObjs">${esc(m.objectifs||"")}</textarea>
-    <div class="mt"><label>Activités réalisées</label><textarea id="mActs" placeholder="Les formations et visites faites pendant ces dates s'ajoutent toutes seules au rapport.">${esc(m.activites||"")}</textarea></div>
-    <div class="mt"><label>Résultats obtenus</label><textarea id="mRes">${esc(m.resultats||"")}</textarea></div>
+    <div class="row"><div><label>Date de rédaction</label><input type="date" id="mDRed" value="${esc(m.dateRedaction||m.retour||today())}"></div><div></div></div>
+    <div class="mt"><label>Objectifs de la mission</label><textarea id="mObjs">${esc(m.objectifs||"")}</textarea></div>
+    <div class="mt"><label>Les activités réalisées lors de la mission</label><textarea id="mActs" placeholder="Les formations et visites faites pendant ces dates s'ajoutent toutes seules.">${esc(m.activites||"")}</textarea></div>
+    <div class="mt"><label>Les résultats obtenus</label><textarea id="mRes">${esc(m.resultats||"")}</textarea></div>
     <div class="mt"><label>Difficultés rencontrées</label><textarea id="mDiff">${esc(m.difficultes||"")}</textarea></div>
-    <div class="mt"><label>Recommandations / suite à donner</label><textarea id="mReco">${esc(m.recommandations||"")}</textarea></div>
+    <div class="mt"><label>Recommandations / prochaines étapes</label><textarea id="mReco">${esc(m.recommandations||"")}</textarea></div>
     <div class="actions" style="margin-top:14px"><button class="btn" id="mSave">Enregistrer</button><button class="btn ghost" id="mCancel">Annuler</button></div>
   </div></div>`;
 }
@@ -1008,55 +1040,74 @@ function bindMissionEditor(){
   $("#mBack").onclick=close; $("#mCancel").onclick=close;
   $("#mDep").onchange=()=>{ if(!$("#mRet").value || $("#mRet").value<$("#mDep").value) $("#mRet").value=$("#mDep").value; };
   $("#mSave").onclick=()=>{
-    if(!val("mObj")||!val("mDest")||!val("mDep")) return toast("Objet, destination et date de départ obligatoires");
+    if(!val("mObj")||!val("mDest")||!val("mDep")) return toast("Lieu, objet et date de départ obligatoires");
     if(val("mRet") && val("mRet")<val("mDep")) return toast("Le retour doit être après le départ");
-    const base=m?{...m}:{id:uid("m"),depenses:[],createdAt:Date.now()};
-    Object.assign(base,{objet:val("mObj"),destination:val("mDest"),depart:val("mDep"),retour:val("mRet")||val("mDep"),transport:val("mTrans"),vehicule:val("mVeh"),kmDep:val("mKm1"),kmRet:val("mKm2"),avance:val("mAv"),accompagnants:val("mAcc"),
-      objectifs:val("mObjs"),activites:val("mActs"),resultats:val("mRes"),difficultes:val("mDiff"),recommandations:val("mReco")});
+    const base=m?{...m}:{id:uid("m"),depenses:[],appros:[],createdAt:Date.now()};
+    Object.assign(base,{ordNom:val("mOrd"),ordFonc:val("mOrdF"),missNom:val("mMis"),missFonc:val("mMisF"),destination:val("mDest"),depart:val("mDep"),retour:val("mRet")||val("mDep"),objet:val("mObj"),
+      faitA:val("mFait"),dateOrdre:val("mDOrd"),avance:val("mAv"),dateRedaction:val("mDRed"),objectifs:val("mObjs"),activites:val("mActs"),resultats:val("mRes"),difficultes:val("mDiff"),recommandations:val("mReco")});
     mEdit=null; mOpen=base.id; $("#tab-missions").innerHTML=""; saveM(base); toast("Mission enregistrée"); window.scrollTo(0,0);
   };
 }
+
+function depFields(r,m){
+  const d0=esc(today()<m.depart?m.depart:(m.retour&&today()>m.retour?m.retour:today()));
+  if(r===0) return `<div class="row"><div><label>Date</label><input type="date" id="dDate" value="${d0}"></div><div><label>Lieu (station)</label><input id="dLieu" placeholder="ex. Total Gagnoa"></div></div>
+    <div class="row mt"><div><label>Type de carburant</label><input id="dType" list="carbList" value="Gasoil"><datalist id="carbList">${CARBS.map(c=>`<option value="${c}">`).join("")}</datalist></div><div><label>Quantité (litres)</label><input id="dQte" inputmode="decimal"></div><div><label>Montant (FCFA) *</label><input id="dMont" inputmode="numeric"></div></div>`;
+  if(r===1) return `<div class="row"><div><label>Du</label><input type="date" id="dDate" value="${d0}"></div><div><label>Au</label><input type="date" id="dFin" value="${d0}"></div></div>
+    <div class="row mt"><div><label>Lieu de séjour</label><input id="dLieu" value="${esc(m.destination||"")}"></div></div>
+    <div class="row mt"><div><label>Forfait par jour (FCFA)</label><input id="dPu" inputmode="numeric"></div><div><label>Nombre de jours</label><input id="dQte" inputmode="numeric" value="1"></div><div><label>Montant (FCFA) *</label><input id="dMont" inputmode="numeric"></div></div>`;
+  return `<div class="row"><div><label>Date</label><input type="date" id="dDate" value="${d0}"></div><div><label>Désignation</label><input id="dLib" placeholder="ex. Péage, recharge téléphone, repas…"></div></div>
+    <div class="row mt"><div><label>Prix unitaire (FCFA)</label><input id="dPu" inputmode="numeric"></div><div><label>Quantité</label><input id="dQte" inputmode="decimal" value="1"></div><div><label>Montant (FCFA) *</label><input id="dMont" inputmode="numeric"></div></div>`;
+}
+const depText = d => { const r=rubOf(d);
+  if(r===0) return [d.lieu||d.libelle, d.type, d.qte&&(d.qte+" L")].filter(Boolean).join(" · ");
+  if(r===1) return [d.lieu||d.libelle, d.pu&&(amt(d.pu)+"/jour"), d.qte&&(d.qte+" jour(s)")].filter(Boolean).join(" · ");
+  return [d.libelle, d.pu&&(amt(d.pu)+" x "+(d.qte||1))].filter(Boolean).join(" · "); };
 
 function renderMissionDetail(){
   const m=missions.find(x=>x.id===mOpen), S=$("#tab-missions");
   const deps=[...(m.depenses||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   const phs=photosBy[m.id]||[], rc=id=>phs.filter(ph=>ph.dep===id);
   const tot=totalDep(m), av=num(m.avance), acts=activitesPendant(m);
-  const km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):0;
   const sansJ=deps.filter(d=>!rc(d.id).length).length;
+  const appros=[...(m.appros||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const p=profilFor(m);
   S.innerHTML=`<button class="back" id="mBack">‹ Toutes les missions</button>
   <div class="card">
-    <div class="head"><div><h2>${esc(m.objet)}</h2><div class="muted">${esc(m.destination)} · ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)} (${nbJours(m)} jours)`:fr(m.depart)}${km>0?` · ${km} km`:""}</div></div>
+    <div class="head"><div><h2>${esc(m.destination)}</h2><div class="muted">${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)} (${nbJours(m.depart,m.retour)} jours)`:fr(m.depart)}</div><div class="muted" style="margin-top:3px">${esc(m.objet||"")}</div></div>
       <div class="actions"><button class="btn ghost sm" id="mEditB">Modifier</button><button class="btn danger sm" id="mDelB">Supprimer</button></div></div>
-    <div class="actions"><button class="btn" id="mPdf">⬇ Rapport + dépenses (PDF)</button></div>
+    <div class="actions">
+      <button class="btn sm" data-pdf="ordre">📄 Ordre de mission</button><button class="btn sm" data-pdf="rapport">📄 Rapport</button><button class="btn sm" data-pdf="justif">📄 Justificatif dépenses</button>
+      <button class="btn sec sm" data-pdf="tout">📦 Dossier complet</button></div>
   </div>
   <div class="card">
     <div class="head"><h2>Dépenses</h2></div>
-    <div class="stats"><div class="stat"><b>${money(tot)}</b><span>total dépensé</span></div>${av?`<div class="stat"><b>${money(Math.abs(av-tot))}</b><span>${av>=tot?"à reverser":"à rembourser"}</span></div>`:""}</div>
+    <div class="stats"><div class="stat"><b>${money(tot)}</b><span>dépenses totales</span></div><div class="stat"><b>${av?money(av):"—"}</b><span>frais de mission</span></div>${av?`<div class="stat"><b>${money(Math.abs(tot-av))}</b><span>${tot>=av?"différence à rembourser":"à reverser"}</span></div>`:""}</div>
     ${sansJ?`<p class="muted" style="margin:8px 0 0">⚠ ${sansJ} dépense(s) sans justificatif</p>`:""}
     <h3>Ajouter une dépense</h3>
-    <div class="row">
-      <div><label>Date</label><input type="date" id="dDate" value="${esc(today()<m.depart?m.depart:(m.retour&&today()>m.retour?m.retour:today()))}"></div>
-      <div><label>Catégorie</label><select id="dCat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select></div>
-    </div>
-    <div class="row mt">
-      <div><label>Désignation</label><input id="dLib" placeholder="ex. Station Total Gagnoa, gasoil / Sinfra"></div>
-    </div>
-    <div class="row mt">
-      <div><label>Jusqu'au (séjour)</label><input type="date" id="dFin"></div>
-      <div><label>Quantité</label><input id="dQte" placeholder="ex. 40 L, 08 jours"></div>
-    </div>
-    <div class="row mt">
-      <div><label>Montant (FCFA) *</label><input id="dMont" inputmode="numeric"></div>
-      <div><label>Paiement</label><select id="dPaie">${PAIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
-    </div>
+    <div class="seg" id="dRubSeg">${RUBS.map((r,i)=>`<button data-r="${i}" class="${i===dRub?"on":""}">${r.replace(" véhicule","").replace("Diverses dépenses","Diverses")}</button>`).join("")}</div>
+    <div class="mt" id="dFields">${depFields(dRub,m)}</div>
     <div class="actions" style="margin-top:12px"><button class="btn" id="dAdd">+ Ajouter la dépense</button></div>
-    ${deps.length?`<div class="scroll" style="margin-top:14px"><table><thead><tr><th>Date</th><th>Dépense</th><th>Montant</th><th>Justif.</th><th></th></tr></thead><tbody>
-      ${deps.map(d=>{ const r=rc(d.id); return `<tr><td>${fr(d.date).slice(0,5)}${d.fin?`<div class="muted">au ${fr(d.fin).slice(0,5)}</div>`:""}</td><td>${esc(d.cat)}${d.libelle?`<div class="muted">${esc(d.libelle)}</div>`:""}<div class="muted">${esc([d.qte,d.paiement].filter(Boolean).join(" · "))}</div></td><td style="white-space:nowrap">${money(d.montant)}</td>
-        <td>${r.map(ph=>`<img src="${ph.data}" data-phid="${esc(ph.id)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--bd);cursor:pointer;margin:0 3px 3px 0">`).join("")}
+    ${RUBS.map((rn,ri)=>{ const ds=deps.filter(d=>rubOf(d)===ri); if(!ds.length) return ""; const st=ds.reduce((s,d)=>s+num(d.montant),0);
+      return `<h3 style="margin-top:16px">${rn} <span class="muted" style="text-transform:none;font-weight:600">— ${money(st)}</span></h3><div class="scroll"><table><tbody>
+      ${ds.map(d=>{ const r=rc(d.id); return `<tr><td style="width:56px">${fr(d.date).slice(0,5)}${d.fin&&d.fin!==d.date?`<div class="muted">au ${fr(d.fin).slice(0,5)}</div>`:""}</td><td>${esc(depText(d))}</td><td style="white-space:nowrap;text-align:right">${money(d.montant)}</td>
+        <td style="width:92px">${r.map(ph=>`<img src="${ph.data}" data-phid="${esc(ph.id)}" style="width:34px;height:34px;object-fit:cover;border-radius:6px;border:1px solid var(--bd);cursor:pointer;margin:0 3px 3px 0">`).join("")}
           <div class="actions" style="gap:4px"><button class="btn sec sm" data-phcam="${esc(m.id)}" data-dep="${esc(d.id)}" title="Photographier le reçu">📷</button><button class="btn ghost sm" data-phgal="${esc(m.id)}" data-dep="${esc(d.id)}" title="Choisir dans la galerie">🖼</button></div></td>
-        <td><button class="x" data-did="${esc(d.id)}" title="Supprimer">×</button></td></tr>`; }).join("")}
-    </tbody></table></div>`:`<div class="muted" style="margin-top:10px">Aucune dépense pour l'instant.</div>`}
+        <td style="width:24px"><button class="x" data-did="${esc(d.id)}" title="Supprimer">×</button></td></tr>`; }).join("")}
+      </tbody></table></div>`; }).join("")}
+    ${deps.length?"":`<div class="muted" style="margin-top:10px">Aucune dépense pour l'instant.</div>`}
+  </div>
+  <div class="card">
+    <div class="head"><h2>Demandes d'approvisionnement</h2></div>
+    <div class="row">
+      <div><label>Approvisionnement de</label><select id="aType"><option>Carte</option><option>Caisse</option></select></div>
+      <div><label>Date</label><input type="date" id="aDate" value="${esc(today())}"></div>
+    </div>
+    <div class="row mt"><div><label>Montant (FCFA) *</label><input id="aMont" inputmode="numeric"></div><div><label>N° de carte</label><input id="aCarte" value="${esc(p.carte||"")}"></div></div>
+    <div class="mt"><label>Motif</label><textarea id="aMotif" placeholder="ex. Carburant pour la mission de formation à Sinfra">${esc("")}</textarea></div>
+    <div class="actions" style="margin-top:10px"><button class="btn" id="aAdd">+ Créer la demande</button></div>
+    ${appros.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${appros.map(a=>`<tr><td>${fr(a.date)}</td><td>${esc(a.type)}<div class="muted">${esc((a.motif||"").slice(0,60))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
+      <td style="width:46px"><button class="btn sm" data-apdf="${esc(a.id)}">📄</button></td><td style="width:24px"><button class="x" data-aid="${esc(a.id)}">×</button></td></tr>`).join("")}</tbody></table></div>`:""}
   </div>
   <div class="card"><div class="head"><h2>Rapport</h2></div><div class="kv">
     <b>Objectifs</b><span style="white-space:pre-wrap">${esc(m.objectifs||"—")}</span>
@@ -1064,117 +1115,240 @@ function renderMissionDetail(){
     <b>Résultats</b><span style="white-space:pre-wrap">${esc(m.resultats||"—")}</span>
     <b>Difficultés</b><span style="white-space:pre-wrap">${esc(m.difficultes||"—")}</span>
     <b>Suite</b><span style="white-space:pre-wrap">${esc(m.recommandations||"—")}</span>
-  </div><p class="muted" style="margin:10px 0 0">Pour compléter le rapport : bouton « Modifier ».</p></div>
+  </div><p class="muted" style="margin:10px 0 0">Pour compléter le rapport ou l'ordre de mission : bouton « Modifier ».</p></div>
   ${photosCard(m.id)}`;
   watchPhotos(m.id); bindPhotos(S,m.id);
+  const fn=t=>`${t}_${(m.destination||"").replace(/[^\p{L}\d\-]+/gu,"_").slice(0,30)}_${m.depart}.pdf`;
+  S.querySelectorAll("[data-pdf]").forEach(b=>b.onclick=()=>exportMission([m],b.dataset.pdf,fn({ordre:"Ordre_de_mission",rapport:"Rapport_de_mission",justif:"Justificatif_depenses",tout:"Dossier_mission"}[b.dataset.pdf])));
   $("#mBack").onclick=()=>{ mOpen=null; renderMissions(); };
   $("#mEditB").onclick=()=>{ mEdit=m.id; S.innerHTML=""; renderMissions(); window.scrollTo(0,0); };
-  $("#mDelB").onclick=async()=>{ if(await askConfirm(`Supprimer la mission « ${m.objet} », ses ${deps.length} dépense(s) et leurs justificatifs ?`)){ mOpen=null; delM(m.id); toast("Mission supprimée"); } };
-  $("#mPdf").onclick=()=>exportMissionsPdf([m], `Mission_${(m.destination||"").replace(/[^\p{L}\d\-]+/gu,"_").slice(0,40)}_${m.depart}.pdf`);
+  $("#mDelB").onclick=async()=>{ if(await askConfirm(`Supprimer la mission à ${m.destination}, ses ${deps.length} dépense(s) et leurs justificatifs ?`)){ mOpen=null; delM(m.id); toast("Mission supprimée"); } };
+  S.querySelectorAll("#dRubSeg [data-r]").forEach(b=>b.onclick=()=>{ dRub=+b.dataset.r; S.querySelectorAll("#dRubSeg [data-r]").forEach(x=>x.classList.toggle("on",x===b)); $("#dFields").innerHTML=depFields(dRub,m); bindAuto(); });
+  const bindAuto=()=>{ const pu=$("#dPu"), q=$("#dQte"), mt=$("#dMont"), d1=$("#dDate"), d2=$("#dFin");
+    const calc=()=>{ if(pu&&q&&num(pu.value)&&num(q.value)) mt.value=Math.round(num(pu.value)*num(q.value)); };
+    if(pu) pu.oninput=calc; if(q) q.oninput=calc;
+    if(d2){ const days=()=>{ if(d1.value&&d2.value&&d2.value>=d1.value){ q.value=nbJours(d1.value,d2.value); calc(); } }; d1.onchange=days; d2.onchange=days; } };
+  bindAuto();
   $("#dAdd").onclick=()=>{
-    const d={id:uid("d"),date:val("dDate"),cat:val("dCat"),libelle:val("dLib"),qte:val("dQte"),montant:num(val("dMont")),paiement:val("dPaie")}; if(val("dFin")&&val("dFin")>d.date) d.fin=val("dFin");
+    const r=dRub, d={id:uid("d"),rub:r,cat:RUBS[r],date:val("dDate"),montant:num(val("dMont"))};
+    if(r===0){ d.lieu=val("dLieu"); d.type=val("dType"); d.qte=val("dQte"); }
+    if(r===1){ d.lieu=val("dLieu"); d.pu=num(val("dPu"))||""; d.qte=val("dQte"); if(val("dFin")&&val("dFin")>d.date) d.fin=val("dFin"); }
+    if(r===2){ d.libelle=val("dLib"); d.pu=num(val("dPu"))||""; d.qte=val("dQte"); }
     if(!d.montant) return toast("Mets le montant");
-    ["dLib","dMont","dQte","dFin"].forEach(id=>document.getElementById(id).value="");
+    $("#dFields").innerHTML=depFields(dRub,m); bindAuto();
     saveM({...m,depenses:[...(m.depenses||[]),d]}); toast(`✓ ${money(d.montant)} ajouté — photographie le reçu avec 📷`);
   };
   S.querySelectorAll("[data-did]").forEach(b=>b.onclick=async()=>{ const d=deps.find(x=>x.id===b.dataset.did);
-    if(!await askConfirm(`Supprimer la dépense ${d.cat} de ${money(d.montant)} et son justificatif ?`)) return;
+    if(!await askConfirm(`Supprimer cette dépense de ${money(d.montant)} et son justificatif ?`)) return;
     for(const ph of rc(d.id)) await delPhoto(ph);
     saveM({...m,depenses:(m.depenses||[]).filter(x=>x.id!==d.id)}); });
+  $("#aAdd").onclick=()=>{ const a={id:uid("a"),type:val("aType"),date:val("aDate"),montant:num(val("aMont")),carte:val("aCarte"),motif:val("aMotif")};
+    if(!a.montant) return toast("Mets le montant demandé");
+    ["aMont","aMotif"].forEach(id=>document.getElementById(id).value="");
+    saveM({...m,appros:[...(m.appros||[]),a]}); toast("Demande créée — touche 📄 pour l'imprimer"); };
+  S.querySelectorAll("[data-apdf]").forEach(b=>b.onclick=()=>{ const a=appros.find(x=>x.id===b.dataset.apdf); exportAppro(m,a); });
+  S.querySelectorAll("[data-aid]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm("Supprimer cette demande d'approvisionnement ?")) return; saveM({...m,appros:(m.appros||[]).filter(x=>x.id!==b.dataset.aid)}); });
 }
 
-// ----- PDF missions -----
-function missionPages(k,m,phs){
-  const {doc,W,H}=k, L=12, R=W-12, p=profilFor(m);
-  const sm={fontSize:9,cellPadding:1.6,valign:"middle",lineColor:[60,60,60],lineWidth:.25,textColor:20};
-  const tbl=o=>doc.autoTable({theme:"grid",margin:{left:L,right:L,bottom:14},styles:sm,headStyles:{fillColor:[255,255,255],textColor:0,fontStyle:"bold",lineColor:[60,60,60],lineWidth:.25},...o});
-  const under=(t,y,size)=>{ doc.setFont("helvetica","bold"); doc.setFontSize(size); doc.text(t,W/2,y,{align:"center"}); const w=doc.getTextWidth(t); doc.setLineWidth(.35); doc.line(W/2-w/2,y+1,W/2+w/2,y+1); };
-  const B={fontStyle:"bold",cellWidth:38,fillColor:[242,246,242]};
-  const km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):0;
-  const deps=[...(m.depenses||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-  const tot=totalDep(m), av=num(m.avance);
-  // page 1 : rapport
-  k.brand(); under("RAPPORT DE MISSION",22,13);
-  tbl({startY:28,body:[["Nom et prénoms",p.nom||""],["Fonction",[p.fonction,p.zone&&("Zone "+p.zone)].filter(Boolean).join(" — ")],["Objet de la mission",m.objet||""],["Destination / itinéraire",m.destination||""],
-    ["Période",(m.retour&&m.retour!==m.depart?`Du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart))+(nbJours(m)?` (${nbJours(m)} jour${nbJours(m)>1?"s":""})`:"")],
-    ["Transport",[m.transport,m.vehicule,km>0?`${km} km parcourus (${m.kmDep} → ${m.kmRet})`:""].filter(Boolean).join(" — ")],["Accompagnant(s)",m.accompagnants||""]],columnStyles:{0:B}});
-  let y=doc.lastAutoTable.finalY+5;
-  const acts=activitesPendant(m);
-  const blocks=[["OBJECTIFS DE LA MISSION",m.objectifs],["ACTIVITÉS RÉALISÉES",[m.activites,acts.map(a=>"• "+a).join("\n")].filter(Boolean).join("\n")],["RÉSULTATS OBTENUS",m.resultats],["DIFFICULTÉS RENCONTRÉES",m.difficultes],["RECOMMANDATIONS / SUITE À DONNER",m.recommandations]];
-  tbl({startY:y,body:blocks.flatMap(([t,v])=>[[{content:t,styles:{fontStyle:"bold",fillColor:[242,246,242]}}],[{content:v||"",styles:{minCellHeight:v?0:14,valign:"top"}}]])});
-  y=doc.lastAutoTable.finalY+5;
-  tbl({startY:y,body:[["Total des dépenses",money(tot)],["Frais de mission reçus",av?money(av):"—"],[av>=tot?"Reste à reverser":"Reste à rembourser à l'agent",av?money(Math.abs(av-tot)):money(tot)]],columnStyles:{0:{...B,cellWidth:60},1:{fontStyle:"bold"}},tableWidth:120});
-  sigBlock(k,doc.lastAutoTable.finalY+5,`Fait le ${fr(m.retour||m.depart)}`,p);
-  // page 2 : JUSTIFICATIF DES DÉPENSES DE MISSIONS (modèle PhytoTop)
-  if(deps.length){
-    const has=id=>phs.some(ph=>ph.dep===id);
-    let n=0; const jn={}; deps.forEach(d=>{ if(has(d.id)) jn[d.id]=++n; });
-    doc.addPage();
-    try{ doc.addImage(LOGO,"JPEG",L,6,15*LOGO_R,15); }catch(e){}
-    doc.setFont("helvetica","italic"); doc.setFontSize(7.5); doc.setTextColor(200,30,30); doc.text("Le Top de la protection phytosanitaire",L+1,24); doc.setTextColor(0);
-    doc.setFont("helvetica","bold"); doc.setFontSize(13.5); doc.text("JUSTIFICATIF DES DÉPENSES DE MISSIONS",W/2+10,31,{align:"center"});
-    const line=(lab,v,x,y,x2,size=10)=>{ doc.setFont("helvetica","bold"); doc.setFontSize(size); doc.text(lab,x,y); const lx=x+doc.getTextWidth(lab)+1.5;
-      doc.setFont("helvetica","normal"); doc.setFontSize(9.5); const t=doc.splitTextToSize(String(v||""),x2-lx)[0]||""; doc.text(t,lx,y-.8); k.dots(lx,x2,y+.6); };
-    line("Nom et Prénoms :",p.nom,L+8,40,L+120,11);
-    line("OBJET MISSION :",[m.objet,m.destination].filter(Boolean).join(" — "),L+8,47,R-48,9);
-    line("DATE :",fr(m.retour||m.depart),R-44,47,R,9);
-    line("PÉRIODE :",m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart),L+8,54,L+110,9);
-    const secs=[["CARBURANT VÉHICULE (lieu, Type de carburant)",7],["FRAIS DE SÉJOUR",4],["DIVERSES DÉPENSES",4]];
-    const body=[]; const tots=[0,0,0];
-    secs.forEach(([title,minRows],si)=>{
-      const ds=deps.filter(d=>SECTION(d.cat)===si);
-      body.push([{content:title,colSpan:4,styles:{fontStyle:"bold",fontSize:8.5,cellPadding:{top:1.6,bottom:1.2,left:1.5,right:1.5}}}]);
-      ds.forEach(d=>{ tots[si]+=num(d.montant);
-        const des=[si===2&&d.cat!=="Autre"?d.cat:"", d.libelle, jn[d.id]?`(J${jn[d.id]})`:""].filter(Boolean).join(" — ").replace(" — (","  (");
-        body.push([d.fin?`${fr(d.date).slice(0,5)} au ${fr(d.fin).slice(0,5)}/${d.fin.slice(2,4)}`:fr(d.date), des||d.cat, d.qte||"", money(d.montant).replace(" FCFA","")]); });
-      for(let i=ds.length;i<minRows;i++) body.push(["","","",""]);
-      body.push([{content:"SOUS TOTAL",colSpan:3,styles:{halign:"right",fontStyle:"bold",fontSize:8,lineWidth:{top:.25,bottom:0,left:0,right:0}}},{content:tots[si]?money(tots[si]).replace(" FCFA",""):"",styles:{fontStyle:"bold",halign:"right"}}]);
-      body.push([{content:"",colSpan:4,styles:{minCellHeight:3,lineWidth:0}}]);
-    });
-    doc.autoTable({startY:60,theme:"grid",margin:{left:L+4,right:L+4,bottom:20},head:[["DATE","DÉSIGNATION","QUANTITÉ","MONTANT"]],body,
-      styles:{fontSize:9,cellPadding:1.2,minCellHeight:5.8,valign:"middle",lineColor:[40,40,40],lineWidth:.25,textColor:20},
-      headStyles:{fillColor:[255,255,255],textColor:0,fontStyle:"bold",halign:"center",fontSize:10,lineWidth:.4,lineColor:[40,40,40]},
-      columnStyles:{0:{cellWidth:30},2:{cellWidth:28,halign:"center"},3:{cellWidth:34,halign:"right"}}});
-    let y=doc.lastAutoTable.finalY+4; if(y+38>H-19){ doc.addPage(); y=20; }
-    const av=num(m.avance), diff=tot-av;
-    doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.text("DIRECTEUR GÉNÉRAL",L+6,y+4);
-    doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.text(p.dg??DG_DEFAUT,L+6,y+10);
-    // le missionnaire (ta signature)
-    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.text("Le missionnaire : "+(p.nom||""),L+6,y+20); drawSig(k,L+6,y+21,45,15,p);
-    doc.autoTable({startY:y,theme:"plain",margin:{left:R-86,right:L+4},tableWidth:82,body:[["DÉPENSES TOTALES",money(tot).replace(" FCFA","")],["FRAIS DE MISSION",av?money(av).replace(" FCFA",""):""],[diff>=0?"DIFFÉRENCE À REMBOURSER":"DIFFÉRENCE À REVERSER",av?money(Math.abs(diff)).replace(" FCFA",""):""]],
-      styles:{fontSize:8.5,cellPadding:1.6,fontStyle:"bold",textColor:20},columnStyles:{0:{cellWidth:50},1:{cellWidth:32,halign:"right",lineWidth:.3,lineColor:[40,40,40]}}});
-    doc.setDrawColor(200,30,30); doc.setLineWidth(.5); doc.line(L,H-17,R,H-17); doc.setDrawColor(0);
-    doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(200,30,30); doc.text("PHYTOSANITAIRES - MATÉRIELS DE TRAITEMENTS - SEMENCES - ENGRAIS",W/2,H-11.5,{align:"center"}); doc.setTextColor(0);
-    // justificatifs
-    const rec=deps.filter(d=>jn[d.id]).flatMap(d=>phs.filter(ph=>ph.dep===d.id).map(ph=>({...ph,lab:`J${jn[d.id]} — ${d.cat}${d.libelle?" — "+d.libelle:""} — ${money(d.montant)} — ${fr(d.date)}`})));
-    for(let i=0;i<rec.length;i+=4){
-      doc.addPage(); k.brand(); under("JUSTIFICATIFS DE DÉPENSES",22,12);
-      const top=30, gap=5, cw=(R-L-gap)/2, ch=(H-14-top-gap)/2;
-      rec.slice(i,i+4).forEach((ph,j)=>{ const x=L+(j%2)*(cw+gap), yy=top+Math.floor(j/2)*(ch+gap), bh=ch-9;
-        const r=Math.min(cw/(ph.w||3),bh/(ph.h||4)), w=(ph.w||3)*r, hh=(ph.h||4)*r, iy=yy+(bh-hh)/2;
-        try{ doc.addImage(ph.data,"JPEG",x+(cw-w)/2,iy,w,hh); }catch(e){ console.error(e); }
-        doc.setFont("helvetica","normal"); doc.setFontSize(7.8); doc.setTextColor(60); doc.text(doc.splitTextToSize(ph.lab,cw),x+cw/2,iy+hh+4,{align:"center"}); doc.setTextColor(0); });
-    }
-  }
-  const other=phs.filter(ph=>!ph.dep);
-  if(other.length) photoPages(k,`Mission — ${m.objet||""} — ${m.destination||""}`,other);
+// ----- éléments communs des documents PhytoTop -----
+function enTete(k,{tagColor=[200,30,30]}={}){
+  const {doc}=k; try{ doc.addImage(LOGO,"JPEG",12,6,17*LOGO_R,17); }catch(e){}
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(...tagColor); doc.text("Le Top de la protection phytosanitaire",13,26.5); doc.setTextColor(0);
 }
-async function exportMissionsPdf(list,filename){
+function piedDePage(k,p,{gris=false}={}){
+  const {doc,W,H}=k, L=12, R=W-12, lines=String((p&&p.footer)||FOOTER_DEFAUT).split("\n").slice(0,5);
+  const col=gris?[140,140,140]:[200,30,30], top=H-8-lines.length*3.3-7;
+  doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...col); doc.text("PHYTOSANITAIRES - MATÉRIELS DE TRAITEMENTS - SEMENCES - ENGRAIS",L,top);
+  doc.setDrawColor(...col); doc.setLineWidth(.4); doc.line(L,top+1.5,R-30,top+1.5); doc.setDrawColor(0);
+  doc.setFont("helvetica","normal"); doc.setFontSize(6.4); doc.setTextColor(gris?120:40);
+  lines.forEach((t,i)=>doc.text(t,L,top+5+i*3.3,{maxWidth:R-L-32})); doc.setTextColor(0);
+  try{ doc.addImage(CAMELEON,"JPEG",R-27,top-5,27,27/CAM_R); }catch(e){}
+  return top-6; // limite basse du contenu
+}
+const dotsLine=(k,x1,x2,y)=>k.dots(x1,x2,y);
+function champ(k,label,value,x,y,x2,{bold=true,size=10,vsize=10}={}){
+  const {doc}=k; doc.setFont("helvetica",bold?"bold":"normal"); doc.setFontSize(size); doc.text(label,x,y);
+  const lx=x+doc.getTextWidth(label)+1.5; doc.setFont("helvetica","normal"); doc.setFontSize(vsize);
+  const t=doc.splitTextToSize(String(value||""),x2-lx); if(t[0]) doc.text(t[0],lx,y-.6); dotsLine(k,lx,x2,y+.8); return t.slice(1);
+}
+// texte écrit "sur les pointillés" (comme sur la fiche papier)
+function lignes(k,text,x,y,x2,minLines,limit,onNewPage){
+  const {doc}=k; doc.setFont("helvetica","normal"); doc.setFontSize(10);
+  const t=text?doc.splitTextToSize(String(text),x2-x-2):[]; const n=Math.max(minLines,t.length);
+  for(let i=0;i<n;i++){ if(y>limit){ y=onNewPage(); } if(t[i]) doc.text(t[i],x+1,y-.8); dotsLine(k,x,x2,y+.6); y+=6.2; }
+  return y;
+}
+
+// ----- ORDRE DE MISSION -----
+function ordrePage(k,m){
+  const {doc,W}=k, p=profilFor(m), L=12, R=W-12;
+  enTete(k);
+  champ(k,"",m.faitA||"",R-82,32,R-52,{size:10}); doc.setFont("helvetica","normal"); doc.text("le",R-49,32); champ(k,"",fr(m.dateOrdre||m.depart),R-44,32,R,{size:10});
+  doc.setFillColor(222,222,222); doc.rect(W/2-30,52,60,11,"F"); doc.setFont("helvetica","normal"); doc.setFontSize(17); doc.text("ORDRE DE MISSION",W/2,60,{align:"center"});
+  const x=40, xv=96, y0=82, st=12;
+  const row=(lab,v,y,colon)=>{ doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.text(lab,x,y); if(colon) doc.text(":",xv-8,y);
+    doc.setFontSize(10); const t=doc.splitTextToSize(String(v||""),R-8-xv); if(t[0]) doc.text(t[0],xv+1,y-.8); dotsLine(k,xv,R-8,y+.6); return t.slice(1); };
+  doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.text("NOM ET PRENOM DE L'ORDONATEUR :",x,y0); { const t=doc.splitTextToSize(String(m.ordNom||dgName(p)),R-8-112); doc.setFontSize(10); if(t[0]) doc.text(t[0],113,y0-.8); dotsLine(k,112,R-8,y0+.6); }
+  row("FONCTION",m.ordFonc||"Directeur Général",y0+st,true);
+  row("AUTORISE : Mr ou Mme",m.missNom||p.nom,y0+2*st,false);
+  row("FONCTION",m.missFonc||p.fonction,y0+3*st,true);
+  doc.setFontSize(10.5); doc.text("A se rendre en mission",x,y0+4*st);
+  const tri=(yy)=>{ doc.setFillColor(0); doc.triangle(x+18,yy-3,x+18,yy,x+21,yy-1.5,"F"); };
+  const xb=x+25, xvb=112, rows=[["LIEU",m.destination],["DATE DE DEPART",fr(m.depart)],["DATE DE RETOUR",fr(m.retour||m.depart)],["OBJET",m.objet]];
+  let y=y0+5*st;
+  rows.forEach(([lab,v],i)=>{ tri(y); doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.text(lab,xb,y);
+    doc.setFontSize(10); const t=doc.splitTextToSize(String(v||""),R-8-xvb);
+    if(t[0]) doc.text(t[0],xvb+1,y-.8); dotsLine(k,xvb,R-8,y+.6);
+    if(lab==="OBJET"){ for(let j=1;j<3||j<t.length;j++){ y+=st; if(t[j]) doc.text(t[j],xvb+1,y-.8); dotsLine(k,xvb,R-8,y+.6); } }
+    y+=st; });
+  doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.text("LE DIRECTEUR GENERAL",x,y+18);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.text(m.ordNom||dgName(p),x,y+26);
+  piedDePage(k,p);
+}
+
+// ----- RAPPORT DE MISSION -----
+function rapportMissionPage(k,m,phsOther){
+  const {doc,W,H}=k, p=profilFor(m), L=16, R=W-16;
+  const head=()=>{ try{ doc.addImage(LOGO,"JPEG",L-2,6,15*LOGO_R,15); }catch(e){} };
+  head();
+  doc.setFont("helvetica","bold"); doc.setFontSize(13.5); const t="RAPPORT DE MISSION"; doc.text(t,W/2,30,{align:"center"}); const tw=doc.getTextWidth(t); doc.setLineWidth(.4); doc.line(W/2-tw/2,31.2,W/2+tw/2,31.2);
+  champ(k,"Date de rédaction :",fr(m.dateRedaction||m.retour||m.depart),R-70,40,R,{size:9.5});
+  champ(k,"COMMERCIAL :",m.missNom||p.nom,L,50,R-62,{size:9.5}); champ(k,"ZONE",p.zone,R-60,50,R,{size:9.5});
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text("PERIODE DE MISSION",L,58); doc.setFont("helvetica","normal"); doc.text(": du",L+doc.getTextWidth("PERIODE DE MISSION")+1,58);
+  champ(k,"",fr(m.depart),L+50,58,L+100,{size:9.5}); doc.setFont("helvetica","normal"); doc.text("Au",L+103,58); champ(k,"",fr(m.retour||m.depart),L+110,58,L+155,{size:9.5});
+  const limit=H-22; const np=()=>{ doc.addPage(); head(); return 30; };
+  const block=(label,text,y,minL,inline)=>{
+    doc.setFont("helvetica","bold"); doc.setFontSize(9.5);
+    if(y>limit-12) y=np();
+    if(inline){ doc.text(label,L,y); const lx=L+doc.getTextWidth(label)+1; doc.setFont("helvetica","normal"); doc.setFontSize(10);
+      const tt=text?doc.splitTextToSize(String(text),R-lx-2):[]; if(tt[0]) doc.text(tt[0],lx+1,y-.8); dotsLine(k,lx,R,y+.6);
+      const rest=text?doc.splitTextToSize(tt.slice(1).join(" "),R-L-2):[]; return lignes(k,rest.join("\n"),L,y+6.6,R,minL-1,limit,np)+3; }
+    doc.text(label,L,y); return lignes(k,text,L,y+8,R,minL,limit,np)+3;
+  };
+  let y=66;
+  y=block("LIEUX DE LA MISSION",m.destination,y,2,true);
+  y=block("OBJECTIFS DE LA MISSION :",[m.objectifs||m.objet].filter(Boolean).join(""),y,4,true);
+  const acts=activitesPendant(m);
+  y=block("LES ACTIVITES REALISEES LORS DE LA MISSION",[m.activites,acts.map(a=>"- "+a).join("\n")].filter(Boolean).join("\n"),y,5,false);
+  y=block("LES RESULTATS OBTENUS",m.resultats,y,5,false);
+  y=block("LES DIFFICULTES RENCONTREES",m.difficultes,y,3,false);
+  y=block("RECOMMANDATIONS / PROCHAINES ETAPES",m.recommandations,y,3,false);
+  if(y+22>H-6) y=np();
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text("LE COMMERCIAL",R-60,y+3); drawSig(k,R-62,y+4,50,13,p); doc.setFont("helvetica","normal"); doc.text(m.missNom||p.nom||"",R-60,y+21);
+  if(phsOther && phsOther.length) photoPages(k,`Mission à ${m.destination||""} — ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)}`,phsOther);
+}
+
+// ----- JUSTIFICATIF DES DÉPENSES DE MISSIONS -----
+function justifPage(k,m,phs){
+  const {doc,W,H}=k, p=profilFor(m), L=14, R=W-14;
+  const deps=[...(m.depenses||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const has=id=>phs.some(ph=>ph.dep===id); let n=0; const jn={}; deps.forEach(d=>{ if(has(d.id)) jn[d.id]=++n; });
+  enTete(k);
+  doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.text("JUSTIFICATIF DES DEPENSES DE MISSIONS",W/2+6,33,{align:"center"});
+  const per=m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart);
+  const lab=(t,v,y,x2)=>{ doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text(t,L+8,y); doc.setFont("helvetica","normal"); doc.setFontSize(9.2); const tt=doc.splitTextToSize(String(v||""),x2-(L+36)).slice(0,2); tt.forEach((s,i)=>doc.text(s,L+36,y+i*4.2)); return y+Math.max(1,tt.length)*4.2+1; };
+  let hy=lab("Nom et Prenoms:",m.missNom||p.nom,41,R); hy=lab("Objet Mission:",m.objet,hy,R-40); hy=lab("Période:",per,hy,R-40);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text("Date:",R-34,hy-5.2); doc.setFont("helvetica","normal"); doc.text(fr(m.dateRedaction||m.retour||m.depart),R-23,hy-5.2);
+  const limitY = H-40;
+  const section=(title,y,head,rows,minRows,subtot)=>{
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.8); doc.text(title,L+6,y); const w=doc.getTextWidth(title); doc.setLineWidth(.25); doc.line(L+6,y+.8,L+6+w,y+.8);
+    const body=rows.map(r=>r); for(let i=rows.length;i<minRows;i++) body.push(["","","","",""]);
+    doc.autoTable({startY:y+2.5,theme:"grid",margin:{left:L,right:L,bottom:14},head:[head],body,
+      styles:{fontSize:8.2,cellPadding:.8,minCellHeight:4.7,valign:"middle",lineColor:[40,40,40],lineWidth:.22,textColor:15},
+      headStyles:{fillColor:[255,255,255],textColor:0,fontStyle:"bold",fontSize:8.3,lineColor:[40,40,40],lineWidth:.3,halign:"left"},
+      columnStyles:{0:{cellWidth:21},2:{cellWidth:34},3:{cellWidth:31,halign:"center"},4:{cellWidth:28,halign:"right"}}});
+    let yy=doc.lastAutoTable.finalY;
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.text("SOUS TOTAL",R-28-31+2,yy+4.2); doc.setLineWidth(.3); doc.rect(R-28,yy+.6,28,5.4);
+    doc.setFont("helvetica","bold"); if(subtot) doc.text(amt(subtot),R-1.5,yy+4.4,{align:"right"});
+    return yy+9;
+  };
+  const by=r=>deps.filter(d=>rubOf(d)===r);
+  const J=d=>jn[d.id]?` (J${jn[d.id]})`:"";
+  const s0=by(0), s1=by(1), s2=by(2), sum=a=>a.reduce((s,d)=>s+num(d.montant),0);
+  let y=Math.max(60,hy+5);
+  y=section("CARBURANT VEHICULE (Lieu,Type de carburant)",y,["DATE","LIEU","TYPE DE CARBURANT","QUANTITE","MONTANT"],
+    s0.map(d=>[fr(d.date),(d.lieu||d.libelle||"")+J(d),d.type||"",d.qte?(String(d.qte).match(/[a-z]/i)?d.qte:d.qte+" L"):"",amt(d.montant)]),7,sum(s0));
+  y=section("FRAIS DE SEJOUR",y,["DATE","LIEU DE SEJOUR","FORFAIT PAR JOUR","NOMBRE DE JOURS","MONTANT"],
+    s1.map(d=>[d.fin&&d.fin!==d.date?`${fr(d.date).slice(0,5)} au ${fr(d.fin).slice(0,5)}`:fr(d.date),(d.lieu||d.libelle||"")+J(d),amt(d.pu),d.qte||"",amt(d.montant)]),6,sum(s1));
+  y=section("DIVERSES DEPENSES",y,["DATE","DESIGNATION","PRIX UNITAIRE","QUANTITE","MONTANT"],
+    s2.map(d=>[fr(d.date),(d.libelle||d.lieu||d.cat||"")+J(d),amt(d.pu),d.qte||"",amt(d.montant)]),6,sum(s2));
+  const tot=totalDep(m), av=num(m.avance), diff=tot-av;
+  const footTop=H-8-String((p&&p.footer)||FOOTER_DEFAUT).split("\n").slice(0,5).length*3.3-7;
+  if(y+40>footTop-4){ piedDePage(k,p); doc.addPage(); enTete(k); y=36; }
+  const bx=R-28, rows=[["DEPENSES TOTALES",amt(tot)],["FRAIS DE MISSION",amt(av)],[diff>=0?"DIFFERENCE A REMBOUSER":"DIFFERENCE A REVERSER",av?amt(Math.abs(diff)):""]];
+  doc.setFont("helvetica","bold"); doc.setFontSize(8.3);
+  rows.forEach(([t,v],i)=>{ const yy=y+i*5.6; doc.text(t,bx-1.5,yy+4,{align:"right"}); doc.setLineWidth(.3); doc.rect(bx,yy,28,5.6); if(v) doc.text(v,R-1.5,yy+4,{align:"right"}); });
+  y+=24;
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.text("L'INTERESSE",L+6,y); doc.line(L+6,y+.8,L+6+doc.getTextWidth("L'INTERESSE"),y+.8);
+  doc.text("LE DIRECTEUR GENERAL",R-58,y); doc.line(R-58,y+.8,R-58+doc.getTextWidth("LE DIRECTEUR GENERAL"),y+.8);
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.text(dgName(p),R-57,y+4.5);
+  drawSig(k,L+4,y+2,44,14,p); doc.setFontSize(7.5); doc.text(m.missNom||p.nom||"",L+6,y+18);
+  piedDePage(k,p);
+  // justificatifs (photos des reçus)
+  const rec=deps.filter(d=>jn[d.id]).flatMap(d=>phs.filter(ph=>ph.dep===d.id).map(ph=>({...ph,lab:`J${jn[d.id]} — ${RUBS[rubOf(d)]} — ${depText(d)} — ${money(d.montant)} — ${fr(d.date)}`})));
+  for(let i=0;i<rec.length;i+=4){
+    doc.addPage(); enTete(k); doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.text("PIECES JUSTIFICATIVES",W/2,22,{align:"center"});
+    const top=32, gap=5, cw=(R-L-gap)/2, ch=(H-14-top-gap)/2;
+    rec.slice(i,i+4).forEach((ph,j)=>{ const x=L+(j%2)*(cw+gap), yy=top+Math.floor(j/2)*(ch+gap), bh=ch-10;
+      const r=Math.min(cw/(ph.w||3),bh/(ph.h||4)), w=(ph.w||3)*r, hh=(ph.h||4)*r, iy=yy+(bh-hh)/2;
+      try{ doc.addImage(ph.data,"JPEG",x+(cw-w)/2,iy,w,hh); }catch(e){ console.error(e); }
+      doc.setFont("helvetica","normal"); doc.setFontSize(7.6); doc.setTextColor(60); doc.text(doc.splitTextToSize(ph.lab,cw),x+cw/2,iy+hh+4,{align:"center"}); doc.setTextColor(0); });
+  }
+}
+
+// ----- DEMANDE D'APPROVISIONNEMENT (carte ou caisse) -----
+function approPage(k,m,a){
+  const {doc,W}=k, p=profilFor(m), L=20, R=W-20;
+  enTete(k,{tagColor:[130,130,130]});
+  const title=`DEMANDE D'APPROVISIONNEMENT DE ${String(a.type||"Carte").toUpperCase()}`;
+  doc.setFont("helvetica","bold"); doc.setFontSize(10.5); const tw=doc.getTextWidth(title);
+  doc.setLineWidth(.35); doc.rect(W/2-tw/2-4,40,tw+8,8); doc.setLineWidth(.15); doc.rect(W/2-tw/2-3,41,tw+6,6); doc.text(title,W/2,45.6,{align:"center"});
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.text("Demandeur",L,60);
+  champ(k,"Nom et Prénom :",m.missNom||p.nom,L,69,L+100,{size:9.5}); champ(k,"Zone :",p.zone,L+106,69,R,{size:9.5});
+  champ(k,"DATE :",fr(a.date),L,80,L+52,{size:9.5});
+  doc.setLineWidth(.25); doc.rect(R-72,88,72,13); doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.text("MONTANT",R-69,97);
+  doc.setFontSize(11); doc.text(amt(a.montant),R-20,96.2,{align:"right"}); dotsLine(k,R-48,R-19,97.2); doc.setFontSize(10.5); doc.text("FCFA",R-17.5,97);
+  let rest=champ(k,"MONTANT EN LETTRE",enLettres(a.montant)+" francs CFA",L,114,R,{size:9});
+  let y=114; rest.forEach(t=>{ y+=6.6; doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.text(t,L+1,y-.8); dotsLine(k,L,R,y+.6); });
+  y+=9;
+  if(String(a.type||"Carte")==="Carte"){ champ(k,"N° DE CARTE :",a.carte,L,y,R,{size:9}); y+=9; }
+  const mt=champ(k,"MOTIF :",a.motif,L,y,R,{size:9});
+  y=lignes(k,mt.join(" "),L,y+6.6,R,9,250,()=>250);
+  y+=8;
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5);
+  [["BENEFICIAIRE",L],["LA COMPTABILITE",W/2-16],["LA DIRECTION GENERALE",R-46]].forEach(([t,x])=>{ doc.text(t,x,y); doc.setLineWidth(.3); doc.line(x,y+.8,x+doc.getTextWidth(t),y+.8); });
+  drawSig(k,L-2,y+2,40,14,p);
+  piedDePage(k,p,{gris:true});
+}
+
+async function exportMission(list,what,filename){
   if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
   const phs=await Promise.all(list.map(m=>getPhotos(m.id)));
-  const k=pdfKit(); list.forEach((m,i)=>{ if(i>0) k.doc.addPage(); missionPages(k,m,phs[i]); }); k.footer();
+  const k=pdfKit(); let first=true; const page=()=>{ if(!first) k.doc.addPage(); first=false; };
+  list.forEach((m,i)=>{
+    if(what==="ordre"||what==="tout"){ page(); ordrePage(k,m); }
+    if(what==="rapport"||what==="tout"){ page(); rapportMissionPage(k,m,phs[i].filter(ph=>!ph.dep)); }
+    if((what==="justif"||what==="tout") && ((m.depenses||[]).length || what==="justif")){ page(); justifPage(k,m,phs[i]); }
+    if(what==="tout") for(const a of (m.appros||[])){ page(); approPage(k,m,a); }
+  });
   saveFile(filename,k.doc.output("blob"));
+}
+function exportAppro(m,a){
+  if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
+  const k=pdfKit(); approPage(k,m,a); saveFile(`Demande_approvisionnement_${a.type}_${a.date}.pdf`,k.doc.output("blob"));
 }
 async function exportMissionsXls(list){
   if(!window.XLSX){ toast("Module Excel non chargé, vérifie ta connexion"); return; }
   const phs=await Promise.all(list.map(m=>getPhotos(m.id)));
-  const rows=[["Mission","Destination","Date","Au","Rubrique","Catégorie","Désignation","Quantité","Paiement","Montant (FCFA)","Justificatif"]];
-  list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.objet||"",m.destination||"",fr(d.date),fr(d.fin||""),["Carburant véhicule","Frais de séjour","Diverses dépenses"][SECTION(d.cat)],d.cat||"",d.libelle||"",d.qte||"",d.paiement||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
+  const rows=[["Mission (lieu)","Objet","Rubrique","Date","Au","Lieu / Désignation","Type carburant","Prix unitaire / forfait","Quantité","Montant (FCFA)","Justificatif"]];
+  list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.destination||"",m.objet||"",RUBS[rubOf(d)],fr(d.date),fr(d.fin||""),d.lieu||d.libelle||"",d.type||"",num(d.pu)||"",d.qte||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
   rows.push([],["","","","","","","","","TOTAL",list.reduce((s,m)=>s+totalDep(m),0),""]);
-  const sum=[["Objet","Destination","Départ","Retour","Jours","Km","Nb dépenses","Total (FCFA)","Avance (FCFA)","Solde (FCFA)"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance), km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):""; return [m.objet||"",m.destination||"",fr(m.depart),fr(m.retour),nbJours(m),km,(m.depenses||[]).length,t,av||"",av?av-t:""]; })];
-  const wb=XLSX.utils.book_new(), w1=XLSX.utils.aoa_to_sheet(rows), w2=XLSX.utils.aoa_to_sheet(sum);
-  w1["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:11},{wch:18},{wch:18},{wch:30},{wch:12},{wch:14},{wch:15},{wch:12}]; w2["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:11},{wch:6},{wch:8},{wch:11},{wch:14},{wch:14},{wch:14}];
-  XLSX.utils.book_append_sheet(wb,w1,"Dépenses"); XLSX.utils.book_append_sheet(wb,w2,"Missions");
+  const sum=[["Lieu","Objet","Départ","Retour","Jours","Nb dépenses","Dépenses totales","Frais de mission","Différence"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance); return [m.destination||"",m.objet||"",fr(m.depart),fr(m.retour),nbJours(m.depart,m.retour),(m.depenses||[]).length,t,av||"",av?t-av:""]; })];
+  const ap=[["Mission","Type","Date","Montant (FCFA)","N° carte","Motif"],...list.flatMap(m=>(m.appros||[]).map(a=>[m.destination||"",a.type,fr(a.date),num(a.montant),a.carte||"",a.motif||""]))];
+  const wb=XLSX.utils.book_new(), w1=XLSX.utils.aoa_to_sheet(rows), w2=XLSX.utils.aoa_to_sheet(sum), w3=XLSX.utils.aoa_to_sheet(ap);
+  w1["!cols"]=[{wch:22},{wch:34},{wch:18},{wch:11},{wch:11},{wch:28},{wch:14},{wch:14},{wch:10},{wch:15},{wch:12}];
+  w2["!cols"]=[{wch:22},{wch:34},{wch:11},{wch:11},{wch:6},{wch:11},{wch:15},{wch:15},{wch:13}]; w3["!cols"]=[{wch:22},{wch:8},{wch:11},{wch:15},{wch:16},{wch:40}];
+  XLSX.utils.book_append_sheet(wb,w1,"Dépenses"); XLSX.utils.book_append_sheet(wb,w2,"Missions"); XLSX.utils.book_append_sheet(wb,w3,"Approvisionnements");
   saveFile(`Depenses_missions_${mMonth||"toutes"}.xlsx`,XLSX.write(wb,{bookType:"xlsx",type:"array"}));
 }
 
