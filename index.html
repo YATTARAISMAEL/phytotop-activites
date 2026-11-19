@@ -91,6 +91,9 @@ h3{font-size:14px;margin:16px 0 8px;color:var(--g2);text-transform:uppercase;let
 .kv b{color:var(--mut);font-weight:600;font-size:12.5px}
 .chk{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--tx);font-weight:500}
 .chk input{width:auto}
+.phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.phgrid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:9px;border:1px solid var(--bd);cursor:pointer;display:block}
+.phview img{max-width:100%;max-height:65vh;display:block;margin:0 auto 10px;border-radius:8px}
 .hidden{display:none!important}
 .scroll{overflow-x:auto}
 </style>
@@ -171,7 +174,7 @@ h3{font-size:14px;margin:16px 0 8px;color:var(--g2);text-transform:uppercase;let
       <div id="lParOpts">
         <div class="row mt">
           <div><label>Lignes vides en plus (retardataires)</label><input type="number" id="lBlank" min="0" max="50" value="0"></div>
-          <div style="align-self:flex-end;padding-bottom:10px"><label class="chk"><input type="checkbox" id="lRap" checked> Avec le rapport d'activité</label></div>
+          <div style="align-self:flex-end;padding-bottom:10px"><label class="chk"><input type="checkbox" id="lRap" checked> Avec le rapport d'activité</label><label class="chk" style="margin-top:6px"><input type="checkbox" id="lPh" checked> Avec les photos</label></div>
         </div>
       </div>
       <div class="actions" style="margin-top:14px">
@@ -225,6 +228,7 @@ function fbAdapter(fs){
     get:async()=>{ const s=await F.getDoc(r); return {id:s.id,exists:s.exists(),data:()=>s.data(),metadata:meta(s)}; },
     onSnapshot:(next,err)=>F.onSnapshot(r, s=>next({id:s.id,exists:s.exists(),data:()=>s.data(),metadata:meta(s)}), e=>{ console.error(e); err&&err({code:e.code,message:e.message}); }) }; };
   const colRef = name => ({ path:name, doc:id=>docRef(name+"/"+id),
+    get:async()=>{ const s=await F.getDocs(F.collection(fs,name)); const docs=s.docs.map(d=>({id:d.id,exists:true,data:()=>d.data(),metadata:meta(s)})); return {docs,size:docs.length,empty:!docs.length,metadata:meta(s)}; },
     onSnapshot:(next,err)=>F.onSnapshot(F.collection(fs,name), s=>{ const docs=s.docs.map(d=>({id:d.id,exists:true,data:()=>d.data(),metadata:meta(s)})); next({docs,size:docs.length,empty:!docs.length,metadata:meta(s),docChanges:()=>[]}); }, e=>{ console.error(e); err&&err({code:e.code,message:e.message}); }) });
   return { doc:docRef, collection:colRef,
     arrayOps:{ merge:(path,d)=>fire(F.setDoc(F.doc(fs,path),d,{merge:true})),
@@ -430,10 +434,68 @@ function saveF(f){ f=nf(f); const i=formations.findIndex(x=>x.id===f.id); const 
     return;
   }
   enqueue(f.id, ()=>db.collection("formations").doc(f.id).set(clean(f))); }
-function delF(id){ formations=formations.filter(x=>x.id!==id); renderAll(); if(db) enqueue(id, ()=>db.collection("formations").doc(id).delete()); }
+function delF(id){ formations=formations.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("formations").doc(id).delete()); }
 function saveV(v){ if(!v.createdBy && ME()) v=({...v,createdBy:ME().uid}); const i=visites.findIndex(x=>x.id===v.id); if(i>=0) visites[i]=v; else visites.push(v); renderAll();
   if(db) enqueue(v.id, ()=>db.collection("visites").doc(v.id).set(clean(v))); }
-function delV(id){ visites=visites.filter(x=>x.id!==id); renderAll(); if(db) enqueue(id, ()=>db.collection("visites").doc(id).delete()); }
+function delV(id){ visites=visites.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("visites").doc(id).delete()); }
+// ===== Photos (une photo = un document, rangé sous sa formation ou sa visite : photos/<id>/items/<photo>) =====
+const phCol = parent => db.collection("photos/"+parent+"/items");
+let memPhotos=[]; const photosBy={}; let phSub=null, phSubFor=null;
+function watchPhotos(parent){
+  if(phSubFor===parent) return; if(phSub){ try{ phSub(); }catch(e){} } phSub=null; phSubFor=parent;
+  if(!parent) return;
+  if(!db){ photosBy[parent]=memPhotos.filter(x=>x.parent===parent); return; }
+  phSub=phCol(parent).onSnapshot(s=>{ photosBy[parent]=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); renderAll(); }, ()=>{});
+}
+async function getPhotos(parent){
+  if(!db) return memPhotos.filter(x=>x.parent===parent);
+  try{ const s=await phCol(parent).get(); return s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); }
+  catch(e){ return photosBy[parent]||[]; }
+}
+function compressImage(file, max=1280, q=0.62){
+  return new Promise((res,rej)=>{ const url=URL.createObjectURL(file); const im=new Image();
+    im.onload=()=>{ const r=Math.min(1,max/Math.max(im.width,im.height)); const c=document.createElement("canvas"); c.width=Math.round(im.width*r); c.height=Math.round(im.height*r);
+      const x=c.getContext("2d"); x.fillStyle="#fff"; x.fillRect(0,0,c.width,c.height); x.drawImage(im,0,0,c.width,c.height); URL.revokeObjectURL(url);
+      let d=c.toDataURL("image/jpeg",q); if(d.length>230000) d=c.toDataURL("image/jpeg",0.45); res({data:d,w:c.width,h:c.height}); };
+    im.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error("image illisible")); }; im.src=url; });
+}
+async function addPhotos(files, parent){
+  files=[...files].slice(0,12); if(!files.length) return;
+  toast(`Ajout de ${files.length} photo(s)…`);
+  let n=0;
+  for(const f of files){
+    try{ const c=await compressImage(f); const ph={parent,data:c.data,w:c.w,h:c.h,date:today(),createdAt:Date.now()}; if(ME()) ph.createdBy=ME().uid;
+      const id=uid("ph");
+      if(db) await phCol(parent).doc(id).set(ph); else { memPhotos.push({id,...ph}); photosBy[parent]=memPhotos.filter(x=>x.parent===parent); }
+      n++;
+    }catch(e){ console.error(e); toast(e&&e.code==="quota_exceeded"?"Stockage plein : supprime d'anciennes photos.":"Une photo n'a pas pu être ajoutée"); }
+  }
+  if(n) toast(`✓ ${n} photo(s) ajoutée(s)`); renderAll();
+}
+async function delPhoto(ph){
+  if(db) await phCol(ph.parent).doc(ph.id).delete(); else memPhotos=memPhotos.filter(x=>x.id!==ph.id);
+  photosBy[ph.parent]=(photosBy[ph.parent]||[]).filter(x=>x.id!==ph.id); renderAll();
+}
+async function delPhotosOf(parent){ for(const ph of await getPhotos(parent)) await delPhoto(ph); }
+function photosCard(parent){
+  const list=photosBy[parent]||[];
+  return `<div class="card"><div class="head"><h2>Photos (${list.length})</h2>
+    <label class="btn sec sm" style="margin:0">📷 Ajouter des photos<input type="file" accept="image/*" multiple hidden data-phadd="${esc(parent)}"></label></div>
+    ${list.length?`<div class="phgrid">${list.map(ph=>`<img src="${ph.data}" data-phid="${esc(ph.id)}" alt="">`).join("")}</div><p class="muted" style="margin:8px 0 0">Elles seront ajoutées au PDF, sur une page « Photos ».</p>`:`<div class="muted">Aucune photo. Prends des photos de la séance ou de la plantation : elles iront dans le rapport.</div>`}
+  </div>`;
+}
+function bindPhotos(root,parent){
+  const inp=root.querySelector(`[data-phadd="${CSS.escape(parent)}"]`); if(inp) inp.onchange=e=>{ addPhotos(e.target.files,parent); e.target.value=""; };
+  root.querySelectorAll("[data-phid]").forEach(img=>img.onclick=()=>{
+    const ph=(photosBy[parent]||[]).find(x=>x.id===img.dataset.phid); if(!ph) return;
+    const m=$("#modalRoot");
+    m.innerHTML=`<div class="modal"><div class="box phview"><img src="${ph.data}" alt=""><div class="muted" style="margin-bottom:12px">Ajoutée le ${fr(ph.date)}</div>
+      <div class="actions" style="justify-content:space-between"><button class="btn danger" id="phDel">Supprimer</button><button class="btn ghost" id="phX">Fermer</button></div></div></div>`;
+    $("#phX").onclick=()=>m.innerHTML="";
+    $("#phDel").onclick=async()=>{ m.innerHTML=""; if(await askConfirm("Supprimer cette photo ?")){ await delPhoto(ph); toast("Photo supprimée"); } };
+  });
+}
+
 function saveProfil(p){ if(window.ME) p={...p,email:ME().email}; profil=p; refreshSig(); renderAll(); if(db) enqueue("profil", ()=>db.doc(PROFIL_PATH).set(p)); }
 
 function setBanner(html){ $("#banner").innerHTML = html ? `<div class="banner">${html}</div>` : ""; }
@@ -534,17 +596,20 @@ $("#profBtn").onclick=async()=>{
     return o.toDataURL("image/png");
   };
   $("#prX").onclick=()=>root.innerHTML="";
-  $("#bkExp").onclick=()=>{ const data={app:"phytotop-activites",version:1,exportedAt:new Date().toISOString(),profil,formations,visites};
+  $("#bkExp").onclick=async()=>{ toast("Préparation de la sauvegarde…");
+    const photos=[]; for(const o of [...formations,...visites]) photos.push(...await getPhotos(o.id));
+    const data={app:"phytotop-activites",version:2,exportedAt:new Date().toISOString(),profil,formations,visites,photos};
     saveFile(`Sauvegarde_PhytoTop_${today()}.json`, JSON.stringify(data)); };
   $("#bkImp").onchange=async e=>{ const file=e.target.files[0]; if(!file) return;
     let data; try{ data=JSON.parse(await file.text()); }catch(err){ return toast("Fichier de sauvegarde illisible"); }
     if(!data||data.app!=="phytotop-activites") return toast("Ce n'est pas une sauvegarde PhytoTop");
-    const nf2=(data.formations||[]).length, nv2=(data.visites||[]).length;
+    const nf2=(data.formations||[]).length, nv2=(data.visites||[]).length, np2=(data.photos||[]).length;
     root.innerHTML="";
-    if(!await askConfirm(`Importer ${nf2} formation(s) et ${nv2} visite(s) ? Les éléments déjà présents avec le même identifiant seront remplacés.`,"Importer")) return;
+    if(!await askConfirm(`Importer ${nf2} formation(s), ${nv2} visite(s) et ${np2} photo(s) ? Les éléments déjà présents avec le même identifiant seront remplacés.`,"Importer")) return;
     if(data.profil && Object.keys(data.profil).length) saveProfil(data.profil);
     for(const f of (data.formations||[])) if(f&&f.id) saveF(f);
     for(const v of (data.visites||[])) if(v&&v.id) saveV(v);
+    for(const ph of (data.photos||[])){ if(!ph||!ph.id||!ph.parent) continue; const {id,...b}=ph; try{ if(db) await phCol(ph.parent).doc(id).set(b); else memPhotos.push(ph); }catch(e){ console.error(e); } }
     toast("Sauvegarde importée ✓"); };
   $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
 };
@@ -672,6 +737,7 @@ function renderDetail(){
       ${ps.map((p,i)=>`<tr><td class="n">${i+1}</td><td>${fr(p.date).slice(0,5)}</td><td>${esc(p.nom)}${p.sexe?` <span class="muted">(${esc(p.sexe)})</span>`:""}</td><td>${esc(p.structure)}</td><td>${esc(p.fonction)}</td><td>${esc(p.tel)}</td><td><button class="x" data-pid="${esc(p.id)}" title="Retirer">×</button></td></tr>`).join("")}
     </tbody></table></div>`:`<div class="empty">Personne pour l'instant.</div>`}
   </div>
+  ${photosCard(f.id)}
   <div class="card">
     <div class="head"><h2>Rapport d'activité</h2></div>
     <p class="muted" style="margin:-4px 0 10px">L'effectif présent et les dates se calculent tout seuls.</p>
@@ -685,6 +751,7 @@ function renderDetail(){
     <div class="mt"><label>Quelle est la prochaine étape ?</label><textarea id="rNext">${esc(r.etape||"")}</textarea></div>
     <div class="actions" style="margin-top:12px"><button class="btn" id="rSave">Enregistrer le rapport</button></div>
   </div>`;
+  watchPhotos(f.id); bindPhotos(D,f.id);
   $("#dBack").onclick=()=>{ openId=null; renderAll(); };
   $("#dEdit").onclick=()=>{ editing=f.id; renderAll(); };
   $("#dDel").onclick=async()=>{ if(await askConfirm(`Supprimer l'activité de ${f.localite} (${periode(f)}) et ses ${ps.length} personnes ?`)){ openId=null; delF(f.id); toast("Activité supprimée"); } };
@@ -824,7 +891,9 @@ function renderVisitDetail(){
   <div class="card"><div class="head"><h2>Recommandations</h2></div>
     ${reco.length?`<div class="scroll"><table><thead><tr><th>Constats</th><th>Causes</th><th>Solutions proposées</th></tr></thead><tbody>${reco.map(r=>`<tr><td>${esc(r.c)}</td><td>${esc(r.ca)}</td><td>${esc(r.s)}</td></tr>`).join("")}</tbody></table></div>`:`<div class="muted">Aucune.</div>`}
     ${v.suite?`<h3>Suite prévue</h3><div style="white-space:pre-wrap">${esc(v.suite)}</div>`:""}
-  </div>`;
+  </div>
+  ${photosCard(v.id)}`;
+  watchPhotos(v.id); bindPhotos(S,v.id);
   $("#vBack").onclick=()=>{ vOpen=null; renderVisites(); };
   $("#vEditB").onclick=()=>{ vEdit=v.id; vDraftReco=null; S.innerHTML=""; renderVisites(); };
   $("#vDelB").onclick=async()=>{ if(await askConfirm(`Supprimer la visite chez ${v.planteur} du ${fr(v.date)} ?`)){ vOpen=null; delV(v.id); toast("Visite supprimée"); } };
@@ -840,7 +909,7 @@ let mode="par";
   ["#lPub","#lLoc","#lBlank"].forEach(s=>$(s).onchange=renderListes);
   ["#lDu","#lAu"].forEach(s=>$(s).onchange=()=>{ $("#lMois").value=""; renderListes(); });
   document.querySelectorAll("#lMode button").forEach(b=>b.onclick=()=>{ mode=b.dataset.m; document.querySelectorAll("#lMode button").forEach(x=>x.classList.toggle("on",x===b)); renderListes(); });
-  $("#lPdf").onclick=()=>{ const s=selection(); if(!s.list.length) return toast("Aucune activité sur cette période"); exportPdf(s.list,mode,+$("#lBlank").value||0,s,$("#lRap").checked); };
+  $("#lPdf").onclick=()=>{ const s=selection(); if(!s.list.length) return toast("Aucune activité sur cette période"); exportPdf(s.list,mode,+$("#lBlank").value||0,s,$("#lRap").checked,$("#lPh").checked); };
   $("#lXls").onclick=()=>{ const s=selection(); if(!s.list.length) return toast("Aucune activité sur cette période"); exportXls(s.list,mode,s); };
   $("#lCopy").onclick=async()=>{ const s=selection(); if(!s.list.length) return toast("Aucune activité sur cette période");
     const txt=tableRows(s.list,mode).map(r=>r.join("\t")).join("\n");
@@ -1011,11 +1080,28 @@ function onePage(k,f,blank,withRapport){
   sigBlock(k,doc.lastAutoTable.finalY+4,`Total personnes touchées : ${ps.length}`,p);
 }
 
-function exportPdf(list,m,blank,s,withRapport=true){
+// pages "Photos" : 6 par page (2 x 3)
+function photoPages(k,title,photos){
+  const {doc,W,H}=k, L=12, R=W-12;
+  for(let i=0;i<photos.length;i+=6){
+    doc.addPage(); k.brand();
+    doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.text("PHOTOS",W/2,18,{align:"center"});
+    doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.text(doc.splitTextToSize(title,R-L-40),W/2,24,{align:"center"});
+    const top=32, gap=5, cw=(R-L-gap)/2, ch=(H-14-top-2*gap)/3;
+    photos.slice(i,i+6).forEach((ph,j)=>{
+      const x=L+(j%2)*(cw+gap), y=top+Math.floor(j/2)*(ch+gap), bh=ch-6;
+      const r=Math.min(cw/(ph.w||4),bh/(ph.h||3)), w=(ph.w||4)*r, hh=(ph.h||3)*r, iy=y+(bh-hh)/2;
+      try{ doc.addImage(ph.data,"JPEG",x+(cw-w)/2,iy,w,hh); }catch(e){ console.error(e); }
+      doc.setFontSize(8); doc.setTextColor(110); doc.text(`Photo ${i+j+1} — ${fr(ph.date)}`,x+cw/2,iy+hh+4,{align:"center"}); doc.setTextColor(0);
+    });
+  }
+}
+async function exportPdf(list,m,blank,s,withRapport=true,withPhotos=true){
   if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
   if(m==="par"){
     const k=pdfKit();
-    list.forEach((f,i)=>{ if(i>0) k.doc.addPage(); onePage(k,f,blank,withRapport); });
+    const phs = withPhotos ? await Promise.all(list.map(f=>getPhotos(f.id))) : list.map(()=>[]);
+    list.forEach((f,i)=>{ if(i>0) k.doc.addPage(); onePage(k,f,blank,withRapport); if(phs[i].length) photoPages(k,`${actLabel(f)} — ${f.localite} — ${periode(f)}`,phs[i]); });
     k.footer(); return saveFile(fname(list,m,s,"pdf"),k.doc.output("blob"));
   }
   const k=pdfKit("landscape"), rows=tableRows(list,m);
@@ -1082,9 +1168,10 @@ function visitPage(k,v){
     didParseCell:d=>{ if(d.section==="body"&&d.row.index===2) d.cell.styles.minCellHeight=18; },
     didDrawCell:d=>{ if(d.section==="body"&&d.row.index===2&&d.column.index===1) drawSig(k,d.cell.x+2,d.cell.y+1.5,d.cell.width-4,d.cell.height-3,profilFor(v)); }});
 }
-function exportVisitsPdf(list,filename){
+async function exportVisitsPdf(list,filename){
   if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
-  const k=pdfKit(); list.forEach((v,i)=>{ if(i>0) k.doc.addPage(); visitPage(k,v); }); k.footer();
+  const phs=await Promise.all(list.map(v=>getPhotos(v.id)));
+  const k=pdfKit(); list.forEach((v,i)=>{ if(i>0) k.doc.addPage(); visitPage(k,v); if(phs[i].length) photoPages(k,`Visite plantation — ${v.planteur||""} — ${fr(v.date)}`,phs[i]); }); k.footer();
   saveFile(filename,k.doc.output("blob"));
 }
 function exportVisitsXls(list){
