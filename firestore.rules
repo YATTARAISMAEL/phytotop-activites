@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function connecte() { return request.auth != null && request.auth.token.email != null; }
+    function admin() { return connecte() && request.auth.token.email.lower() == "ismaelyattara1@gmail.com"; }
+    function membre() { return admin() || (connecte() && exists(/databases/$(database)/documents/membres/$(request.auth.token.email.lower()))); }
+
+    // Données INDIVIDUELLES : chacun lit et écrit uniquement les siennes (l'administrateur non plus n'y a pas accès)
+    match /users/{uid}/{document=**} {
+      allow read, write: if membre() && request.auth.uid == uid;
+    }
+    // Liste des personnes autorisées à créer un compte : gérée par l'administrateur
+    match /membres/{email} {
+      allow read: if admin() || (connecte() && request.auth.token.email.lower() == email);
+      allow write: if admin();
+    }
+  }
+}
