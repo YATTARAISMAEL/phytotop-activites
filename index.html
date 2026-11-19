@@ -251,7 +251,8 @@ async function isMember(email){
 
 async function teamDb(){
   document.getElementById("gateLogo").src = document.querySelector(".applogo").src;
-  if(!FIREBASE_CONFIG || !window.FB){ gateShow("gateCfg"); return new Promise(()=>{}); }
+  // Pas encore de base d'équipe : l'appli marche seule sur ce téléphone (données gardées dans le téléphone)
+  if(!FIREBASE_CONFIG || !window.FB){ window.SOLO=true; try{ return await localDb(); }catch(e){ console.error(e); return null; } }
   const F=window.FB;
   const app=F.initializeApp(FIREBASE_CONFIG);
   teamAuth=F.getAuth(app); try{ await F.setPersistence(teamAuth,F.browserLocalPersistence); }catch(e){}
@@ -291,6 +292,7 @@ async function teamDb(){
 document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("teamBtn").onclick=()=>{
     const root=document.getElementById("modalRoot");
+    if(window.SOLO){ root.innerHTML=`<div class="modal"><div class="box"><div class="head"><h2>Équipe</h2></div><p>Mode <b>téléphone seul</b> : tes données sont gardées dans ce téléphone.</p><p class="muted">Le travail en équipe (plusieurs téléphones sur les mêmes formations) s'activera dès que la base Firebase sera branchée. Pense à faire <b>Mon profil → Exporter la sauvegarde</b> régulièrement.</p><div class="actions" style="justify-content:flex-end"><button class="btn ghost" id="tmX">Fermer</button></div></div></div>`; document.getElementById("tmX").onclick=()=>root.innerHTML=""; return; }
     if(!window.ME){ toast("Connecte-toi d'abord"); return; }
     root.innerHTML=`<div class="modal"><div class="box">
       <div class="head"><h2>Équipe</h2></div>
