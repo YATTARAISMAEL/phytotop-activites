@@ -7,6 +7,7 @@ service cloud.firestore {
 
     match /formations/{id} { allow read, write: if membre(); }
     match /visites/{id}    { allow read, write: if membre(); }
+    match /missions/{id}   { allow read, write: if membre(); }
     match /photos/{parent}/items/{id} { allow read, write: if membre(); }
     match /profils/{uid}   { allow read: if membre(); allow write: if membre() && request.auth.uid == uid; }
     match /membres/{email} {

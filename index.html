@@ -142,6 +142,7 @@ h3{font-size:14px;margin:16px 0 8px;color:var(--g2);text-transform:uppercase;let
   <nav>
     <button data-tab="form" class="on">Formations</button>
     <button data-tab="visites">Visites</button>
+    <button data-tab="missions">Missions</button>
     <button data-tab="listes">Listes</button>
     <button data-tab="contacts">Contacts</button>
   </nav>
@@ -151,6 +152,7 @@ h3{font-size:14px;margin:16px 0 8px;color:var(--g2);text-transform:uppercase;let
   <div id="banner"></div>
   <section id="tab-form"><div id="fList"></div><div id="fDetail" class="hidden"></div></section>
   <section id="tab-visites" class="hidden"></section>
+  <section id="tab-missions" class="hidden"></section>
 
   <section id="tab-listes" class="hidden">
     <div class="card">
@@ -415,7 +417,7 @@ let profils={};
 const profilFor = o => (o && o.createdBy && profils[o.createdBy]) || profil || {};
 
 // ================= store =================
-let formations = [], visites = [], profil = {};
+let formations = [], visites = [], missions = [], profil = {};
 let PROFIL_PATH = "config/profil";
 const ME = () => window.ME || null;
 let db = null, dl = null, loaded = false;
@@ -439,6 +441,17 @@ function saveF(f){ f=nf(f); const i=formations.findIndex(x=>x.id===f.id); const 
 function delF(id){ formations=formations.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("formations").doc(id).delete()); }
 function saveV(v){ if(!v.createdBy && ME()) v=({...v,createdBy:ME().uid}); const i=visites.findIndex(x=>x.id===v.id); if(i>=0) visites[i]=v; else visites.push(v); renderAll();
   if(db) enqueue(v.id, ()=>db.collection("visites").doc(v.id).set(clean(v))); }
+function saveM(m){ if(!m.createdBy && ME()) m={...m,createdBy:ME().uid}; m={...m,depenses:m.depenses||[]};
+  const i=missions.findIndex(x=>x.id===m.id), old=i>=0?missions[i]:null; if(i>=0) missions[i]=m; else missions.push(m); renderAll();
+  if(!db) return;
+  if(db.arrayOps && old){ const path="missions/"+m.id, oi=new Set((old.depenses||[]).map(d=>JSON.stringify(d))), ni=new Set(m.depenses.map(d=>JSON.stringify(d)));
+    const {depenses:_a,...rest}=clean(m), {depenses:_b,...restOld}=clean(old);
+    if(JSON.stringify(rest)!==JSON.stringify(restOld)) db.arrayOps.merge(path,rest);
+    for(const d of m.depenses) if(!oi.has(JSON.stringify(d))) db.arrayOps.add(path,"depenses",JSON.parse(JSON.stringify(d)));
+    for(const d of (old.depenses||[])) if(!ni.has(JSON.stringify(d))) db.arrayOps.remove(path,"depenses",JSON.parse(JSON.stringify(d)));
+    return; }
+  enqueue(m.id, ()=>db.collection("missions").doc(m.id).set(clean(m))); }
+function delM(id){ missions=missions.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("missions").doc(id).delete()); }
 function delV(id){ visites=visites.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("visites").doc(id).delete()); }
 // ===== Photos (une photo = un document, rangé sous sa formation ou sa visite : photos/<id>/items/<photo>) =====
 const phCol = parent => db.collection("photos/"+parent+"/items");
@@ -466,12 +479,12 @@ function compressFrom(url, max, q, revoke){
       let d=c.toDataURL("image/jpeg",q); if(d.length>230000) d=c.toDataURL("image/jpeg",0.45); res({data:d,w:c.width,h:c.height}); };
     im.onerror=()=>{ if(revoke) URL.revokeObjectURL(url); rej(new Error("format de photo non lu")); }; im.src=url; });
 }
-async function addPhotos(files, parent){
+async function addPhotos(files, parent, dep){
   files=[...files].slice(0,12); if(!files.length) return;
   toast(`Ajout de ${files.length} photo(s)…`);
   let n=0;
   for(const f of files){
-    try{ const c=await compressImage(f); const ph={parent,data:c.data,w:c.w,h:c.h,date:today(),createdAt:Date.now()}; if(ME()) ph.createdBy=ME().uid;
+    try{ const c=await compressImage(f); const ph={parent,data:c.data,w:c.w,h:c.h,date:today(),createdAt:Date.now()}; if(dep) ph.dep=dep; if(ME()) ph.createdBy=ME().uid;
       const id=uid("ph");
       if(db) await phCol(parent).doc(id).set(ph); else { memPhotos.push({id,...ph}); photosBy[parent]=memPhotos.filter(x=>x.parent===parent); }
       n++;
@@ -485,16 +498,16 @@ async function delPhoto(ph){
 }
 async function delPhotosOf(parent){ for(const ph of await getPhotos(parent)) await delPhoto(ph); }
 function photosCard(parent){
-  const list=photosBy[parent]||[];
+  const list=(photosBy[parent]||[]).filter(ph=>!ph.dep);
   return `<div class="card"><div class="head"><h2>Photos (${list.length})</h2>
     <div class="actions"><button class="btn sec sm" data-phcam="${esc(parent)}">📷 Prendre une photo</button><button class="btn ghost sm" data-phgal="${esc(parent)}">🖼 Galerie</button></div></div>
     ${list.length?`<div class="phgrid">${list.map(ph=>`<img src="${ph.data}" data-phid="${esc(ph.id)}" alt="">`).join("")}</div><p class="muted" style="margin:8px 0 0">Elles seront ajoutées au PDF, sur une page « Photos ».</p>`:`<div class="muted">Aucune photo. Prends des photos de la séance ou de la plantation : elles iront dans le rapport.</div>`}
   </div>`;
 }
-let phTarget=null;
-["phPickCam","phPickGal"].forEach(id=>{ const el=document.getElementById(id); el.onchange=e=>{ const files=[...(e.target.files||[])]; e.target.value=""; if(!phTarget) return toast("Ouvre d'abord une formation ou une visite"); if(!files.length) return toast("Aucune photo reçue"); addPhotos(files,phTarget); }; });
+let phTarget=null, phDep=null;
+["phPickCam","phPickGal"].forEach(id=>{ const el=document.getElementById(id); el.onchange=e=>{ const files=[...(e.target.files||[])]; e.target.value=""; if(!phTarget) return toast("Ouvre d'abord une formation ou une visite"); if(!files.length) return toast("Aucune photo reçue"); addPhotos(files,phTarget,phDep); }; });
 function bindPhotos(root,parent){
-  root.querySelectorAll("[data-phcam],[data-phgal]").forEach(b=>b.onclick=()=>{ phTarget=parent; document.getElementById(b.dataset.phcam!==undefined?"phPickCam":"phPickGal").click(); });
+  root.querySelectorAll("[data-phcam],[data-phgal]").forEach(b=>b.onclick=()=>{ phTarget=parent; phDep=b.dataset.dep||null; document.getElementById(b.dataset.phcam!==undefined?"phPickCam":"phPickGal").click(); });
   root.querySelectorAll("[data-phid]").forEach(img=>img.onclick=()=>{
     const ph=(photosBy[parent]||[]).find(x=>x.id===img.dataset.phid); if(!ph) return;
     const m=$("#modalRoot");
@@ -521,6 +534,7 @@ function setBanner(html){ $("#banner").innerHTML = html ? `<div class="banner">$
   const fail=err=>{ clearTimeout(timer); loaded=true; setBanner("⚠ Impossible de lire les données ("+esc(err.code)+")."); renderAll(); };
   let fOk=false, vOk=false;
   db.collection("formations").onSnapshot(s=>{ formations=s.docs.map(d=>nf({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); if(!s.metadata.fromCache && !fOk){ fOk=true; done(); } renderAll(); }, fail);
+  db.collection("missions").onSnapshot(s=>{ missions=s.docs.map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); renderAll(); }, ()=>{});
   db.collection("visites").onSnapshot(s=>{ visites=s.docs.map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); if(!s.metadata.fromCache && !vOk){ vOk=true; done(); } renderAll(); }, fail);
   db.doc(PROFIL_PATH).onSnapshot(s=>{ if(s.exists){ profil=JSON.parse(JSON.stringify(s.data())); refreshSig(); renderAll(); } }, ()=>{});
 })();
@@ -530,7 +544,7 @@ let tab="form";
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
   tab=b.dataset.tab;
   document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
-  ["form","visites","listes","contacts"].forEach(t=>$("#tab-"+t).classList.toggle("hidden",t!==tab));
+  ["form","visites","missions","listes","contacts"].forEach(t=>$("#tab-"+t).classList.toggle("hidden",t!==tab));
   renderAll(); window.scrollTo(0,0);
 });
 // keep what's being typed when data refreshes in the background
@@ -544,6 +558,7 @@ function preserve(rootSel, fn){
 function renderAll(){
   if(tab==="form") preserve("#tab-form", renderForm);
   if(tab==="visites") renderVisites();
+  if(tab==="missions") renderMissions();
   if(tab==="listes") renderListes();
   if(tab==="contacts") renderContacts();
 }
@@ -606,18 +621,19 @@ $("#profBtn").onclick=async()=>{
   };
   $("#prX").onclick=()=>root.innerHTML="";
   $("#bkExp").onclick=async()=>{ toast("Préparation de la sauvegarde…");
-    const photos=[]; for(const o of [...formations,...visites]) photos.push(...await getPhotos(o.id));
-    const data={app:"phytotop-activites",version:2,exportedAt:new Date().toISOString(),profil,formations,visites,photos};
+    const photos=[]; for(const o of [...formations,...visites,...missions]) photos.push(...await getPhotos(o.id));
+    const data={app:"phytotop-activites",version:2,exportedAt:new Date().toISOString(),profil,formations,visites,missions,photos};
     saveFile(`Sauvegarde_PhytoTop_${today()}.json`, JSON.stringify(data)); };
   $("#bkImp").onchange=async e=>{ const file=e.target.files[0]; if(!file) return;
     let data; try{ data=JSON.parse(await file.text()); }catch(err){ return toast("Fichier de sauvegarde illisible"); }
     if(!data||data.app!=="phytotop-activites") return toast("Ce n'est pas une sauvegarde PhytoTop");
-    const nf2=(data.formations||[]).length, nv2=(data.visites||[]).length, np2=(data.photos||[]).length;
+    const nf2=(data.formations||[]).length, nv2=(data.visites||[]).length, np2=(data.photos||[]).length, nm2=(data.missions||[]).length;
     root.innerHTML="";
-    if(!await askConfirm(`Importer ${nf2} formation(s), ${nv2} visite(s) et ${np2} photo(s) ? Les éléments déjà présents avec le même identifiant seront remplacés.`,"Importer")) return;
+    if(!await askConfirm(`Importer ${nf2} formation(s), ${nv2} visite(s), ${nm2} mission(s) et ${np2} photo(s) ? Les éléments déjà présents avec le même identifiant seront remplacés.`,"Importer")) return;
     if(data.profil && Object.keys(data.profil).length) saveProfil(data.profil);
     for(const f of (data.formations||[])) if(f&&f.id) saveF(f);
     for(const v of (data.visites||[])) if(v&&v.id) saveV(v);
+    for(const m of (data.missions||[])) if(m&&m.id) saveM(m);
     for(const ph of (data.photos||[])){ if(!ph||!ph.id||!ph.parent) continue; const {id,...b}=ph; try{ if(db) await phCol(ph.parent).doc(id).set(b); else memPhotos.push(ph); }catch(e){ console.error(e); } }
     toast("Sauvegarde importée ✓"); };
   $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
@@ -909,6 +925,231 @@ function renderVisitDetail(){
   $("#vPdf").onclick=()=>exportVisitsPdf([v], `Visite_${(v.planteur||"").replace(/[^\p{L}\d\-]+/gu,"_")}_${v.date}.pdf`);
 }
 
+// ================= MISSIONS =================
+const CATS=["Carburant","Transport","Hébergement","Restauration","Péage / Taxes","Communication","Réparation / Entretien","Fournitures","Autre"];
+const PAIES=["Espèces","Mobile Money","Carte","Chèque","Virement"];
+const money = n => String(Math.round(Number(n)||0)).replace(/\B(?=(\d{3})+(?!\d))/g," ")+" FCFA";
+const num = s => Number(String(s||"").replace(/[^\d.,-]/g,"").replace(",","."))||0;
+const totalDep = m => (m.depenses||[]).reduce((s,d)=>s+num(d.montant),0);
+const nbJours = m => (m.depart&&m.retour) ? Math.round((new Date(m.retour)-new Date(m.depart))/864e5)+1 : 0;
+function activitesPendant(m){
+  if(!m.depart) return [];
+  const a=m.depart, b=m.retour||m.depart, out=[];
+  for(const f of formations){ const n=f.participants.filter(p=>p.date>=a&&p.date<=b).length; if(n || (f.date<=b && f.fin>=a && f.date>=a)) out.push(`${actLabel(f)} — ${f.localite}${f.lieu?" ("+f.lieu+")":""} : ${n} personne(s) touchée(s)`); }
+  for(const v of visites) if(v.date>=a && v.date<=b) out.push(`Visite plantation — ${v.planteur}${v.village?" ("+v.village+")":""}${v.cultures?" — "+v.cultures:""}`);
+  return out;
+}
+let mMonth=today().slice(0,7), mOpen=null, mEdit=null;
+
+function renderMissions(){
+  const S=$("#tab-missions");
+  if(mEdit){ if(!S.querySelector("#mForm")){ S.innerHTML=missionEditor(mEdit==="new"?{}:missions.find(x=>x.id===mEdit)||{}); bindMissionEditor(); } return; }
+  if(mOpen && !missions.find(x=>x.id===mOpen)) mOpen=null;
+  if(mOpen) return preserve("#tab-missions", renderMissionDetail);
+  const list=sorted(missions.map(m=>({...m,date:m.depart}))).filter(m=>!mMonth||(m.depart||"").startsWith(mMonth)||(m.retour||"").startsWith(mMonth));
+  const tot=list.reduce((s,m)=>s+totalDep(m),0);
+  S.innerHTML=`<div class="head"><h2>Missions & dépenses</h2><button class="btn" id="mNew">+ Nouvelle mission</button></div>
+  <div class="card">
+    <div class="row"><div><label>Mois</label><input type="month" id="mMonth" value="${esc(mMonth)}"></div></div>
+    <div class="stats" style="margin-top:12px"><div class="stat"><b>${list.length}</b><span>missions</span></div><div class="stat"><b>${money(tot)}</b><span>dépenses du mois</span></div></div>
+    <div class="actions" style="margin-top:12px"><button class="btn sec" id="mPdfM">⬇ PDF du mois</button><button class="btn ghost" id="mXlsM">⬇ Excel des dépenses</button></div>
+  </div>
+  <div class="card flist">${list.length?list.map(m=>`
+    <div class="item" data-id="${esc(m.id)}">
+      <div><div class="t">${esc(m.objet||"Mission")} <span class="muted">· ${esc(m.destination||"")}</span></div>
+      <div class="muted" style="margin-top:3px">${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)} · ${(m.depenses||[]).length} dépense(s)</div></div>
+      <div class="count" style="font-size:15px">${money(totalDep(m))}</div>
+    </div>`).join(""):`<div class="empty">${loaded?"Aucune mission ce mois-ci.<br>Crée-en une avec « + Nouvelle mission ».":"Chargement…"}</div>`}</div>`;
+  $("#mNew").onclick=()=>{ mEdit="new"; S.innerHTML=""; renderMissions(); window.scrollTo(0,0); };
+  $("#mMonth").onchange=e=>{ mMonth=e.target.value; renderMissions(); };
+  const sel=()=>missions.filter(m=>list.some(x=>x.id===m.id)).sort((a,b)=>(a.depart||"").localeCompare(b.depart||""));
+  $("#mPdfM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMissionsPdf(sel(), `Missions_${mMonth||"toutes"}.pdf`); };
+  $("#mXlsM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMissionsXls(sel()); };
+  S.querySelectorAll(".item").forEach(it=>it.onclick=()=>{ mOpen=it.dataset.id; renderMissions(); window.scrollTo(0,0); });
+}
+
+function missionEditor(m){
+  const p=profil||{};
+  return `<div id="mForm"><button class="back" id="mBack">‹ Retour</button>
+  <div class="card">
+    <div class="head"><h2>${m.id?"Modifier la mission":"Nouvelle mission"}</h2></div>
+    <div class="row"><div><label>Objet de la mission *</label><input id="mObj" value="${esc(m.objet||"")}" placeholder="ex. Tournée de formation revendeurs"></div></div>
+    <div class="row mt"><div><label>Destination / itinéraire *</label><input id="mDest" value="${esc(m.destination||"")}" placeholder="ex. Gagnoa - Diégonéfla - Oumé"></div></div>
+    <div class="row mt">
+      <div><label>Date de départ *</label><input type="date" id="mDep" value="${esc(m.depart||today())}"></div>
+      <div><label>Date de retour</label><input type="date" id="mRet" value="${esc(m.retour||m.depart||today())}"></div>
+    </div>
+    <div class="row mt">
+      <div><label>Moyen de transport</label><input id="mTrans" list="transList" value="${esc(m.transport||"")}"><datalist id="transList"><option value="Véhicule de service"><option value="Moto"><option value="Véhicule personnel"><option value="Transport en commun"></datalist></div>
+      <div><label>Véhicule (immatriculation)</label><input id="mVeh" value="${esc(m.vehicule||"")}"></div>
+    </div>
+    <div class="row mt">
+      <div><label>Km au départ</label><input id="mKm1" inputmode="numeric" value="${esc(m.kmDep||"")}"></div>
+      <div><label>Km au retour</label><input id="mKm2" inputmode="numeric" value="${esc(m.kmRet||"")}"></div>
+      <div><label>Avance reçue (FCFA)</label><input id="mAv" inputmode="numeric" value="${esc(m.avance||"")}"></div>
+    </div>
+    <div class="row mt"><div><label>Accompagnant(s)</label><input id="mAcc" value="${esc(m.accompagnants||"")}"></div></div>
+    <h3>Rapport de mission</h3>
+    <label>Objectifs de la mission</label><textarea id="mObjs">${esc(m.objectifs||"")}</textarea>
+    <div class="mt"><label>Activités réalisées</label><textarea id="mActs" placeholder="Les formations et visites faites pendant ces dates s'ajoutent toutes seules au rapport.">${esc(m.activites||"")}</textarea></div>
+    <div class="mt"><label>Résultats obtenus</label><textarea id="mRes">${esc(m.resultats||"")}</textarea></div>
+    <div class="mt"><label>Difficultés rencontrées</label><textarea id="mDiff">${esc(m.difficultes||"")}</textarea></div>
+    <div class="mt"><label>Recommandations / suite à donner</label><textarea id="mReco">${esc(m.recommandations||"")}</textarea></div>
+    <div class="actions" style="margin-top:14px"><button class="btn" id="mSave">Enregistrer</button><button class="btn ghost" id="mCancel">Annuler</button></div>
+  </div></div>`;
+}
+function bindMissionEditor(){
+  const m = mEdit==="new" ? null : missions.find(x=>x.id===mEdit);
+  const close=()=>{ mEdit=null; $("#tab-missions").innerHTML=""; renderMissions(); window.scrollTo(0,0); };
+  $("#mBack").onclick=close; $("#mCancel").onclick=close;
+  $("#mDep").onchange=()=>{ if(!$("#mRet").value || $("#mRet").value<$("#mDep").value) $("#mRet").value=$("#mDep").value; };
+  $("#mSave").onclick=()=>{
+    if(!val("mObj")||!val("mDest")||!val("mDep")) return toast("Objet, destination et date de départ obligatoires");
+    if(val("mRet") && val("mRet")<val("mDep")) return toast("Le retour doit être après le départ");
+    const base=m?{...m}:{id:uid("m"),depenses:[],createdAt:Date.now()};
+    Object.assign(base,{objet:val("mObj"),destination:val("mDest"),depart:val("mDep"),retour:val("mRet")||val("mDep"),transport:val("mTrans"),vehicule:val("mVeh"),kmDep:val("mKm1"),kmRet:val("mKm2"),avance:val("mAv"),accompagnants:val("mAcc"),
+      objectifs:val("mObjs"),activites:val("mActs"),resultats:val("mRes"),difficultes:val("mDiff"),recommandations:val("mReco")});
+    mEdit=null; mOpen=base.id; $("#tab-missions").innerHTML=""; saveM(base); toast("Mission enregistrée"); window.scrollTo(0,0);
+  };
+}
+
+function renderMissionDetail(){
+  const m=missions.find(x=>x.id===mOpen), S=$("#tab-missions");
+  const deps=[...(m.depenses||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const phs=photosBy[m.id]||[], rc=id=>phs.filter(ph=>ph.dep===id);
+  const tot=totalDep(m), av=num(m.avance), acts=activitesPendant(m);
+  const km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):0;
+  const sansJ=deps.filter(d=>!rc(d.id).length).length;
+  S.innerHTML=`<button class="back" id="mBack">‹ Toutes les missions</button>
+  <div class="card">
+    <div class="head"><div><h2>${esc(m.objet)}</h2><div class="muted">${esc(m.destination)} · ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)} (${nbJours(m)} jours)`:fr(m.depart)}${km>0?` · ${km} km`:""}</div></div>
+      <div class="actions"><button class="btn ghost sm" id="mEditB">Modifier</button><button class="btn danger sm" id="mDelB">Supprimer</button></div></div>
+    <div class="actions"><button class="btn" id="mPdf">⬇ Rapport + dépenses (PDF)</button></div>
+  </div>
+  <div class="card">
+    <div class="head"><h2>Dépenses</h2></div>
+    <div class="stats"><div class="stat"><b>${money(tot)}</b><span>total dépensé</span></div>${av?`<div class="stat"><b>${money(Math.abs(av-tot))}</b><span>${av>=tot?"à reverser":"à rembourser"}</span></div>`:""}</div>
+    ${sansJ?`<p class="muted" style="margin:8px 0 0">⚠ ${sansJ} dépense(s) sans justificatif</p>`:""}
+    <h3>Ajouter une dépense</h3>
+    <div class="row">
+      <div><label>Date</label><input type="date" id="dDate" value="${esc(today()<m.depart?m.depart:(m.retour&&today()>m.retour?m.retour:today()))}"></div>
+      <div><label>Catégorie</label><select id="dCat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select></div>
+    </div>
+    <div class="row mt">
+      <div><label>Libellé</label><input id="dLib" placeholder="ex. Gasoil station Total Gagnoa"></div>
+    </div>
+    <div class="row mt">
+      <div><label>Montant (FCFA) *</label><input id="dMont" inputmode="numeric"></div>
+      <div><label>Paiement</label><select id="dPaie">${PAIES.map(c=>`<option>${c}</option>`).join("")}</select></div>
+    </div>
+    <div class="actions" style="margin-top:12px"><button class="btn" id="dAdd">+ Ajouter la dépense</button></div>
+    ${deps.length?`<div class="scroll" style="margin-top:14px"><table><thead><tr><th>Date</th><th>Dépense</th><th>Montant</th><th>Justif.</th><th></th></tr></thead><tbody>
+      ${deps.map(d=>{ const r=rc(d.id); return `<tr><td>${fr(d.date).slice(0,5)}</td><td>${esc(d.cat)}${d.libelle?`<div class="muted">${esc(d.libelle)}</div>`:""}<div class="muted">${esc(d.paiement||"")}</div></td><td style="white-space:nowrap">${money(d.montant)}</td>
+        <td>${r.map(ph=>`<img src="${ph.data}" data-phid="${esc(ph.id)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--bd);cursor:pointer;margin:0 3px 3px 0">`).join("")}
+          <div class="actions" style="gap:4px"><button class="btn sec sm" data-phcam="${esc(m.id)}" data-dep="${esc(d.id)}" title="Photographier le reçu">📷</button><button class="btn ghost sm" data-phgal="${esc(m.id)}" data-dep="${esc(d.id)}" title="Choisir dans la galerie">🖼</button></div></td>
+        <td><button class="x" data-did="${esc(d.id)}" title="Supprimer">×</button></td></tr>`; }).join("")}
+    </tbody></table></div>`:`<div class="muted" style="margin-top:10px">Aucune dépense pour l'instant.</div>`}
+  </div>
+  <div class="card"><div class="head"><h2>Rapport</h2></div><div class="kv">
+    <b>Objectifs</b><span style="white-space:pre-wrap">${esc(m.objectifs||"—")}</span>
+    <b>Activités</b><span style="white-space:pre-wrap">${esc(m.activites||"")}${acts.length?`${m.activites?"\n":""}${acts.map(a=>"• "+esc(a)).join("\n")}`:(m.activites?"":"—")}</span>
+    <b>Résultats</b><span style="white-space:pre-wrap">${esc(m.resultats||"—")}</span>
+    <b>Difficultés</b><span style="white-space:pre-wrap">${esc(m.difficultes||"—")}</span>
+    <b>Suite</b><span style="white-space:pre-wrap">${esc(m.recommandations||"—")}</span>
+  </div><p class="muted" style="margin:10px 0 0">Pour compléter le rapport : bouton « Modifier ».</p></div>
+  ${photosCard(m.id)}`;
+  watchPhotos(m.id); bindPhotos(S,m.id);
+  $("#mBack").onclick=()=>{ mOpen=null; renderMissions(); };
+  $("#mEditB").onclick=()=>{ mEdit=m.id; S.innerHTML=""; renderMissions(); window.scrollTo(0,0); };
+  $("#mDelB").onclick=async()=>{ if(await askConfirm(`Supprimer la mission « ${m.objet} », ses ${deps.length} dépense(s) et leurs justificatifs ?`)){ mOpen=null; delM(m.id); toast("Mission supprimée"); } };
+  $("#mPdf").onclick=()=>exportMissionsPdf([m], `Mission_${(m.destination||"").replace(/[^\p{L}\d\-]+/gu,"_").slice(0,40)}_${m.depart}.pdf`);
+  $("#dAdd").onclick=()=>{
+    const d={id:uid("d"),date:val("dDate"),cat:val("dCat"),libelle:val("dLib"),montant:num(val("dMont")),paiement:val("dPaie")};
+    if(!d.montant) return toast("Mets le montant");
+    ["dLib","dMont"].forEach(id=>document.getElementById(id).value="");
+    saveM({...m,depenses:[...(m.depenses||[]),d]}); toast(`✓ ${money(d.montant)} ajouté — photographie le reçu avec 📷`);
+  };
+  S.querySelectorAll("[data-did]").forEach(b=>b.onclick=async()=>{ const d=deps.find(x=>x.id===b.dataset.did);
+    if(!await askConfirm(`Supprimer la dépense ${d.cat} de ${money(d.montant)} et son justificatif ?`)) return;
+    for(const ph of rc(d.id)) await delPhoto(ph);
+    saveM({...m,depenses:(m.depenses||[]).filter(x=>x.id!==d.id)}); });
+}
+
+// ----- PDF missions -----
+function missionPages(k,m,phs){
+  const {doc,W,H}=k, L=12, R=W-12, p=profilFor(m);
+  const sm={fontSize:9,cellPadding:1.6,valign:"middle",lineColor:[60,60,60],lineWidth:.25,textColor:20};
+  const tbl=o=>doc.autoTable({theme:"grid",margin:{left:L,right:L,bottom:14},styles:sm,headStyles:{fillColor:[255,255,255],textColor:0,fontStyle:"bold",lineColor:[60,60,60],lineWidth:.25},...o});
+  const under=(t,y,size)=>{ doc.setFont("helvetica","bold"); doc.setFontSize(size); doc.text(t,W/2,y,{align:"center"}); const w=doc.getTextWidth(t); doc.setLineWidth(.35); doc.line(W/2-w/2,y+1,W/2+w/2,y+1); };
+  const B={fontStyle:"bold",cellWidth:38,fillColor:[242,246,242]};
+  const km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):0;
+  const deps=[...(m.depenses||[])].sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const tot=totalDep(m), av=num(m.avance);
+  // page 1 : rapport
+  k.brand(); under("RAPPORT DE MISSION",22,13);
+  tbl({startY:28,body:[["Nom et prénoms",p.nom||""],["Fonction",[p.fonction,p.zone&&("Zone "+p.zone)].filter(Boolean).join(" — ")],["Objet de la mission",m.objet||""],["Destination / itinéraire",m.destination||""],
+    ["Période",(m.retour&&m.retour!==m.depart?`Du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart))+(nbJours(m)?` (${nbJours(m)} jour${nbJours(m)>1?"s":""})`:"")],
+    ["Transport",[m.transport,m.vehicule,km>0?`${km} km parcourus (${m.kmDep} → ${m.kmRet})`:""].filter(Boolean).join(" — ")],["Accompagnant(s)",m.accompagnants||""]],columnStyles:{0:B}});
+  let y=doc.lastAutoTable.finalY+5;
+  const acts=activitesPendant(m);
+  const blocks=[["OBJECTIFS DE LA MISSION",m.objectifs],["ACTIVITÉS RÉALISÉES",[m.activites,acts.map(a=>"• "+a).join("\n")].filter(Boolean).join("\n")],["RÉSULTATS OBTENUS",m.resultats],["DIFFICULTÉS RENCONTRÉES",m.difficultes],["RECOMMANDATIONS / SUITE À DONNER",m.recommandations]];
+  tbl({startY:y,body:blocks.flatMap(([t,v])=>[[{content:t,styles:{fontStyle:"bold",fillColor:[242,246,242]}}],[{content:v||"",styles:{minCellHeight:v?0:14,valign:"top"}}]])});
+  y=doc.lastAutoTable.finalY+5;
+  tbl({startY:y,body:[["Total des dépenses",money(tot)],["Avance reçue",av?money(av):"—"],[av>=tot?"Reste à reverser":"Reste à rembourser à l'agent",av?money(Math.abs(av-tot)):money(tot)]],columnStyles:{0:{...B,cellWidth:60},1:{fontStyle:"bold"}},tableWidth:120});
+  sigBlock(k,doc.lastAutoTable.finalY+5,`Fait le ${fr(m.retour||m.depart)}`,p);
+  // page 2 : état des dépenses
+  if(deps.length){
+    doc.addPage(); k.brand(); under("ÉTAT DES DÉPENSES ET JUSTIFICATIFS",22,13);
+    doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.text(`${m.objet||""} — ${m.destination||""} — ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)}`,W/2,28,{align:"center"});
+    const has=id=>phs.some(ph=>ph.dep===id);
+    let n=0; const jn={}; deps.forEach((d,i)=>{ if(has(d.id)) jn[d.id]=++n; });
+    tbl({startY:33,head:[["N°","Date","Catégorie","Libellé","Paiement","Montant","Justif."]],body:deps.map((d,i)=>[i+1,fr(d.date),d.cat||"",d.libelle||"",d.paiement||"",money(d.montant),jn[d.id]?"J"+jn[d.id]:"—"]),
+      foot:[[{content:"TOTAL",colSpan:5,styles:{halign:"right"}},money(tot),""]],footStyles:{fillColor:[242,246,242],textColor:0,fontStyle:"bold",lineColor:[60,60,60],lineWidth:.25},
+      columnStyles:{0:{cellWidth:9,halign:"center"},1:{cellWidth:21},2:{cellWidth:32},4:{cellWidth:24},5:{cellWidth:28,halign:"right"},6:{cellWidth:14,halign:"center"}}});
+    const byCat={}; deps.forEach(d=>byCat[d.cat]=(byCat[d.cat]||0)+num(d.montant));
+    y=doc.lastAutoTable.finalY+5;
+    tbl({startY:y,head:[["Récapitulatif par catégorie","Montant"]],body:Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>[c,money(v)]),tableWidth:110,columnStyles:{1:{halign:"right"}}});
+    y=doc.lastAutoTable.finalY+6;
+    const sansJ=deps.filter(d=>!jn[d.id]).length;
+    if(sansJ){ doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.text(`${sansJ} dépense(s) sans justificatif.`,L,y); y+=5; }
+    if(y+30>H-12){ doc.addPage(); y=20; }
+    const bw=(R-L-8)/2;
+    doc.setLineWidth(.25); doc.rect(L,y,bw,26); doc.rect(L+bw+8,y,bw,26);
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.text("Le missionnaire",L+2,y+4); doc.text("Visa du responsable",L+bw+10,y+4);
+    drawSig(k,L+4,y+5,bw-8,15,p); doc.setFont("helvetica","normal"); if(p.nom) doc.text(p.nom,L+bw/2,y+24,{align:"center"});
+    // justificatifs
+    const rec=deps.filter(d=>jn[d.id]).flatMap(d=>phs.filter(ph=>ph.dep===d.id).map(ph=>({...ph,lab:`J${jn[d.id]} — ${d.cat}${d.libelle?" — "+d.libelle:""} — ${money(d.montant)} — ${fr(d.date)}`})));
+    for(let i=0;i<rec.length;i+=4){
+      doc.addPage(); k.brand(); under("JUSTIFICATIFS DE DÉPENSES",22,12);
+      const top=30, gap=5, cw=(R-L-gap)/2, ch=(H-14-top-gap)/2;
+      rec.slice(i,i+4).forEach((ph,j)=>{ const x=L+(j%2)*(cw+gap), yy=top+Math.floor(j/2)*(ch+gap), bh=ch-9;
+        const r=Math.min(cw/(ph.w||3),bh/(ph.h||4)), w=(ph.w||3)*r, hh=(ph.h||4)*r, iy=yy+(bh-hh)/2;
+        try{ doc.addImage(ph.data,"JPEG",x+(cw-w)/2,iy,w,hh); }catch(e){ console.error(e); }
+        doc.setFont("helvetica","normal"); doc.setFontSize(7.8); doc.setTextColor(60); doc.text(doc.splitTextToSize(ph.lab,cw),x+cw/2,iy+hh+4,{align:"center"}); doc.setTextColor(0); });
+    }
+  }
+  const other=phs.filter(ph=>!ph.dep);
+  if(other.length) photoPages(k,`Mission — ${m.objet||""} — ${m.destination||""}`,other);
+}
+async function exportMissionsPdf(list,filename){
+  if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
+  const phs=await Promise.all(list.map(m=>getPhotos(m.id)));
+  const k=pdfKit(); list.forEach((m,i)=>{ if(i>0) k.doc.addPage(); missionPages(k,m,phs[i]); }); k.footer();
+  saveFile(filename,k.doc.output("blob"));
+}
+async function exportMissionsXls(list){
+  if(!window.XLSX){ toast("Module Excel non chargé, vérifie ta connexion"); return; }
+  const phs=await Promise.all(list.map(m=>getPhotos(m.id)));
+  const rows=[["Mission","Destination","Date","Catégorie","Libellé","Paiement","Montant (FCFA)","Justificatif"]];
+  list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.objet||"",m.destination||"",fr(d.date),d.cat||"",d.libelle||"",d.paiement||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
+  rows.push([],["","","","","","TOTAL",list.reduce((s,m)=>s+totalDep(m),0),""]);
+  const sum=[["Objet","Destination","Départ","Retour","Jours","Km","Nb dépenses","Total (FCFA)","Avance (FCFA)","Solde (FCFA)"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance), km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):""; return [m.objet||"",m.destination||"",fr(m.depart),fr(m.retour),nbJours(m),km,(m.depenses||[]).length,t,av||"",av?av-t:""]; })];
+  const wb=XLSX.utils.book_new(), w1=XLSX.utils.aoa_to_sheet(rows), w2=XLSX.utils.aoa_to_sheet(sum);
+  w1["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:20},{wch:30},{wch:14},{wch:15},{wch:12}]; w2["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:11},{wch:6},{wch:8},{wch:11},{wch:14},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,w1,"Dépenses"); XLSX.utils.book_append_sheet(wb,w2,"Missions");
+  saveFile(`Depenses_missions_${mMonth||"toutes"}.xlsx`,XLSX.write(wb,{bookType:"xlsx",type:"array"}));
+}
+
 // ================= LISTES =================
 let mode="par";
 (function initListes(){
@@ -1008,6 +1249,10 @@ const GREEN=[46,125,50];
 function pdfKit(orientation="portrait"){
   const { jsPDF } = window.jspdf;
   const doc=new jsPDF({unit:"mm",format:"a4",orientation});
+  // caractères que la police du PDF ne sait pas dessiner
+  const san=s=>typeof s==="string"?s.replace(/[→⇒➜➔]/g,"->").replace(/[←]/g,"<-").replace(/[’‘]/g,"'").replace(/[“”]/g,'"').replace(/œ/g,"oe").replace(/Œ/g,"OE").replace(/…/g,"...").replace(/[\u2009\u202F\u00A0]/g," "):Array.isArray(s)?s.map(san):s;
+  const _t=doc.text.bind(doc); doc.text=(t,...r)=>_t(san(t),...r);
+  const _s=doc.splitTextToSize.bind(doc); doc.splitTextToSize=(t,...r)=>_s(san(t),...r);
   const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), L=16, R=W-16;
   const k={doc,W,H,L,R};
   k.brand=()=>{ try{ doc.addImage(LOGO,"JPEG",L-2,5,14*LOGO_R,14); }catch(e){ console.error(e); } };
