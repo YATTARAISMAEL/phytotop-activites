@@ -1383,8 +1383,8 @@ async function exportMission(list,what,filename){
     if((what==="justif"||what==="rapjust"||what==="tout") && ((m.depenses||[]).length || what!=="tout")){ page(); justifPage(k,m,phs[i]); }
     if(what==="tout") for(const a of (m.appros||[])){ page(); approPage(k,m,a); }
   });
-  if(what!=="ordre") list.forEach(m=>{ if(!m.envoyeLe && m.retour && m.retour<today()) markSent("m",m); });
-  saveFile(filename,k.doc.output("blob"));
+  const sent=await saveFile(filename,k.doc.output("blob"));
+  if(sent && what!=="ordre") list.forEach(m=>{ if(!m.envoyeLe && m.retour && m.retour<today()) markSent("m",m); });
 }
 function exportAppro(m,a){
   if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
@@ -1490,9 +1490,48 @@ $("#cXls").onclick=()=>{
 };
 
 // ================= EXPORTS =================
+const PDFJS_BASE="vendor/";
+let _pdfjsP=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(!_pdfjsP) _pdfjsP=new Promise((ok,ko)=>{ const sc=document.createElement("script"); sc.src=PDFJS_BASE+"pdf.min.js"; sc.onload=()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS_BASE+"pdf.worker.min.js"; }catch(e){} ok(window.pdfjsLib); }; sc.onerror=()=>{ _pdfjsP=null; ko(new Error("pdfjs")); }; document.head.appendChild(sc); });
+  return _pdfjsP;
+}
+async function previewPdf(filename,blob){
+  const root=$("#modalRoot");
+  root.innerHTML=`<div class="modal" style="padding:0;align-items:stretch"><div class="box" style="max-width:none;border-radius:0;max-height:none;height:100%;display:flex;flex-direction:column;padding:0;background:#525659">
+    <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;background:#fff;border-bottom:1px solid #ddd">
+      <b style="flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">👁 ${esc(filename)}</b>
+      <button class="btn ghost sm" id="pvX">Fermer</button><button class="btn sm" id="pvGo">📤 Envoyer</button></div>
+    <div id="pvPages" style="flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;align-items:center;gap:10px;color:#fff;font-size:14px">Préparation de l'aperçu…</div></div></div>`;
+  return new Promise(resolve=>{
+    $("#pvX").onclick=()=>{ root.innerHTML=""; resolve(false); };
+    $("#pvGo").onclick=()=>{ root.innerHTML=""; resolve(true); };
+    (async()=>{
+      const box=$("#pvPages");
+      try{
+        const lib=await loadPdfJs();
+        const pdf=await lib.getDocument({data:new Uint8Array(await blob.arrayBuffer())}).promise;
+        if(!document.getElementById("pvPages")) return;
+        box.innerHTML="";
+        const W=Math.min(box.clientWidth-20, 900);
+        for(let n=1;n<=pdf.numPages;n++){
+          if(!document.getElementById("pvPages")) return;
+          const pg=await pdf.getPage(n), v0=pg.getViewport({scale:1}), dpr=Math.min(window.devicePixelRatio||1,2);
+          const vp=pg.getViewport({scale:W/v0.width*dpr});
+          const c=document.createElement("canvas"); c.width=vp.width; c.height=vp.height; c.style.width=(vp.width/dpr)+"px"; c.style.background="#fff"; c.style.boxShadow="0 2px 8px rgba(0,0,0,.4)";
+          box.appendChild(c);
+          const lab=document.createElement("div"); lab.textContent=`Page ${n} / ${pdf.numPages}`; lab.style.fontSize="12px"; box.appendChild(lab);
+          await pg.render({canvasContext:c.getContext("2d"),viewport:vp}).promise;
+        }
+      }catch(e){ console.error(e); if(document.getElementById("pvPages")) box.innerHTML="Aperçu impossible sur cet appareil (connexion ?). Tu peux quand même envoyer le document."; }
+    })();
+  });
+}
 async function saveFile(filename,data){
+  if(/\.pdf$/i.test(filename) && data instanceof Blob){ if(!await previewPdf(filename,data)) return; }
   if(!dl){ toast("Téléchargement impossible sur cet appareil"); return; }
-  try{ await dl.save({filename,data}); toast("Fichier prêt ✓"); }
+  try{ await dl.save({filename,data}); toast("Fichier prêt ✓"); return true; }
   catch(e){ if(e&&e.code==="declined") return; toast("Téléchargement impossible ("+(e&&e.code||"erreur")+")"); }
 }
 const periodTxt = s => s ? `Période du ${fr(s.du)} au ${fr(s.au)}` : "";
@@ -1611,8 +1650,8 @@ async function exportPdf(list,m,blank,s,withRapport=true,withPhotos=true){
     const k=pdfKit();
     const phs = withPhotos ? await Promise.all(list.map(f=>getPhotos(f.id))) : list.map(()=>[]);
     list.forEach((f,i)=>{ if(i>0) k.doc.addPage(); onePage(k,f,blank,withRapport); if(phs[i].length) photoPages(k,`${actLabel(f)} — ${f.localite} — ${periode(f)}`,phs[i]); });
-    list.forEach(f=>{ if(!f.envoyeLe && f.fin && f.fin<today()) markSent("f",f); });
-    k.footer(); return saveFile(fname(list,m,s,"pdf"),k.doc.output("blob"));
+    k.footer(); const sent=await saveFile(fname(list,m,s,"pdf"),k.doc.output("blob"));
+    if(sent) list.forEach(f=>{ if(!f.envoyeLe && f.fin && f.fin<today()) markSent("f",f); }); return sent;
   }
   const k=pdfKit("landscape"), rows=tableRows(list,m);
   k.brand(); let y=k.title(m==="recap"?"LISTE RÉCAPITULATIVE DES PERSONNES TOUCHÉES":"LISTE DES PERSONNES TOUCHÉES (sans doublon)",24);
@@ -1682,8 +1721,8 @@ async function exportVisitsPdf(list,filename){
   if(!window.jspdf){ toast("Module PDF non chargé, vérifie ta connexion"); return; }
   const phs=await Promise.all(list.map(v=>getPhotos(v.id)));
   const k=pdfKit(); list.forEach((v,i)=>{ if(i>0) k.doc.addPage(); visitPage(k,v); if(phs[i].length) photoPages(k,`Visite plantation — ${v.planteur||""} — ${fr(v.date)}`,phs[i]); }); k.footer();
-  list.forEach(v=>{ if(!v.envoyeLe) markSent("v",v); });
-  saveFile(filename,k.doc.output("blob"));
+  const sent=await saveFile(filename,k.doc.output("blob"));
+  if(sent) list.forEach(v=>{ if(!v.envoyeLe) markSent("v",v); });
 }
 function exportVisitsXls(list){
   if(!window.XLSX){ toast("Module Excel non chargé, vérifie ta connexion"); return; }

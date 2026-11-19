@@ -1,6 +1,6 @@
 // Fonctionne hors connexion : l'appli est gardée en mémoire sur le téléphone
-const CACHE = "phytotop-634e26c4";
-const FILES = ["./","index.html","manifest.webmanifest","vendor/jspdf.umd.min.js","vendor/jspdf.plugin.autotable.min.js","vendor/xlsx.full.min.js","icons/icon-192.png","icons/icon-512.png","icons/icon-maskable-512.png","icons/apple-touch-icon.png","vendor/firebase.js"];
+const CACHE = "phytotop-68c2d782";
+const FILES = ["./","index.html","manifest.webmanifest","vendor/jspdf.umd.min.js","vendor/jspdf.plugin.autotable.min.js","vendor/xlsx.full.min.js","icons/icon-192.png","icons/icon-512.png","icons/icon-maskable-512.png","icons/apple-touch-icon.png","vendor/firebase.js","vendor/pdf.min.js","vendor/pdf.worker.min.js"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", e => {
