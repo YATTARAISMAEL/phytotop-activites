@@ -5,11 +5,11 @@ service cloud.firestore {
     function admin() { return connecte() && request.auth.token.email.lower() == "__ADMIN__"; }
     function membre() { return admin() || (connecte() && exists(/databases/$(database)/documents/membres/$(request.auth.token.email.lower()))); }
 
-    match /formations/{id} { allow read, write: if membre(); }
-    match /visites/{id}    { allow read, write: if membre(); }
-    match /missions/{id}   { allow read, write: if membre(); }
-    match /photos/{parent}/items/{id} { allow read, write: if membre(); }
-    match /profils/{uid}   { allow read: if membre(); allow write: if membre() && request.auth.uid == uid; }
+    // Données INDIVIDUELLES : chacun lit et écrit uniquement les siennes (l'administrateur non plus n'y a pas accès)
+    match /users/{uid}/{document=**} {
+      allow read, write: if membre() && request.auth.uid == uid;
+    }
+    // Liste des personnes autorisées à créer un compte : gérée par l'administrateur
     match /membres/{email} {
       allow read: if admin() || (connecte() && request.auth.token.email.lower() == email);
       allow write: if admin();

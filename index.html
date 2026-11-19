@@ -119,7 +119,7 @@ h3{font-size:14px;margin:16px 0 8px;color:var(--g2);text-transform:uppercase;let
   <img id="gateLogo" alt="RAPHYTYA">
   <div id="gateLogin">
     <h2>Connexion</h2>
-    <p class="sub">Connecte-toi pour accéder aux activités de l'équipe.</p>
+    <p class="sub">Connecte-toi avec ton accès personnel pour retrouver tes activités.</p>
     <label>Adresse e-mail</label><input id="gEmail" type="email" autocomplete="email" inputmode="email">
     <div class="mt"><label>Mot de passe</label><input id="gPass" type="password" autocomplete="current-password"></div>
     <div class="actions" style="margin-top:14px"><button class="btn" id="gIn" style="flex:1">Se connecter</button></div>
@@ -225,21 +225,22 @@ function fbErr(e){
 function gateShow(which){ const g=document.getElementById("gate"); g.classList.toggle("on",!!which);
   ["gateLogin","gateWait","gateCfg"].forEach(id=>document.getElementById(id).classList.toggle("hidden",id!==which)); }
 
-function fbAdapter(fs){
-  const F=window.FB;
+// Données individuelles : tout est rangé sous users/<identifiant>/… ; personne d'autre n'y a accès
+function fbAdapter(fs, base=""){
+  const F=window.FB; const P=path=>base+path;
   const fire = p => { p.catch(e=>{ console.error(e); toast(fbErr(e)); }); return Promise.resolve(); }; // ne bloque pas hors connexion
   const meta = s => ({fromCache:false, hasPendingWrites:s.metadata.hasPendingWrites});
-  const docRef = path => { const r=F.doc(fs,path); return { id:path.split("/").pop(), path,
+  const docRef = path => { const r=F.doc(fs,P(path)); return { id:path.split("/").pop(), path,
     set:d=>fire(F.setDoc(r,d)), delete:()=>fire(F.deleteDoc(r)), update:d=>fire(F.updateDoc(r,d)),
     get:async()=>{ const s=await F.getDoc(r); return {id:s.id,exists:s.exists(),data:()=>s.data(),metadata:meta(s)}; },
     onSnapshot:(next,err)=>F.onSnapshot(r, s=>next({id:s.id,exists:s.exists(),data:()=>s.data(),metadata:meta(s)}), e=>{ console.error(e); err&&err({code:e.code,message:e.message}); }) }; };
   const colRef = name => ({ path:name, doc:id=>docRef(name+"/"+id),
-    get:async()=>{ const s=await F.getDocs(F.collection(fs,name)); const docs=s.docs.map(d=>({id:d.id,exists:true,data:()=>d.data(),metadata:meta(s)})); return {docs,size:docs.length,empty:!docs.length,metadata:meta(s)}; },
-    onSnapshot:(next,err)=>F.onSnapshot(F.collection(fs,name), s=>{ const docs=s.docs.map(d=>({id:d.id,exists:true,data:()=>d.data(),metadata:meta(s)})); next({docs,size:docs.length,empty:!docs.length,metadata:meta(s),docChanges:()=>[]}); }, e=>{ console.error(e); err&&err({code:e.code,message:e.message}); }) });
+    get:async()=>{ const s=await F.getDocs(F.collection(fs,P(name))); const docs=s.docs.map(d=>({id:d.id,exists:true,data:()=>d.data(),metadata:meta(s)})); return {docs,size:docs.length,empty:!docs.length,metadata:meta(s)}; },
+    onSnapshot:(next,err)=>F.onSnapshot(F.collection(fs,P(name)), s=>{ const docs=s.docs.map(d=>({id:d.id,exists:true,data:()=>d.data(),metadata:meta(s)})); next({docs,size:docs.length,empty:!docs.length,metadata:meta(s),docChanges:()=>[]}); }, e=>{ console.error(e); err&&err({code:e.code,message:e.message}); }) });
   return { doc:docRef, collection:colRef,
-    arrayOps:{ merge:(path,d)=>fire(F.setDoc(F.doc(fs,path),d,{merge:true})),
-      add:(path,field,item)=>fire(F.updateDoc(F.doc(fs,path),{[field]:F.arrayUnion(item)})),
-      remove:(path,field,item)=>fire(F.updateDoc(F.doc(fs,path),{[field]:F.arrayRemove(item)})) } };
+    arrayOps:{ merge:(path,d)=>fire(F.setDoc(F.doc(fs,P(path)),d,{merge:true})),
+      add:(path,field,item)=>fire(F.updateDoc(F.doc(fs,P(path)),{[field]:F.arrayUnion(item)})),
+      remove:(path,field,item)=>fire(F.updateDoc(F.doc(fs,P(path)),{[field]:F.arrayRemove(item)})) } };
 }
 
 async function isMember(email){
@@ -278,10 +279,7 @@ async function teamDb(){
   }
   gateShow(null);
   window.ME={uid:user.uid,email,admin:email===ADMIN_EMAIL};
-  PROFIL_PATH="profils/"+user.uid;
-  const adapter=fbAdapter(teamFs);
-  // profils (nom, signature) de toute l'équipe, pour les rapports
-  adapter.collection("profils").onSnapshot(s=>{ const m={}; for(const d of s.docs) m[d.id]=d.data(); profils=m; Object.values(m).forEach(p=>ensureSig(p.signature)); }, ()=>{});
+  const adapter=fbAdapter(teamFs, "users/"+user.uid+"/");
   // indicateur hors connexion
   const net=()=>document.getElementById("netBadge").classList.toggle("on",!navigator.onLine);
   addEventListener("online",net); addEventListener("offline",net); net();
@@ -297,9 +295,10 @@ document.addEventListener("DOMContentLoaded",()=>{
     root.innerHTML=`<div class="modal"><div class="box">
       <div class="head"><h2>Équipe</h2></div>
       <p class="muted" style="margin:0 0 12px">Connecté : <b>${esc(ME().email)}</b>${isAdmin()?" (administrateur)":""}</p>
+      <p class="muted" style="margin:0 0 12px">🔒 Tes formations, visites et missions sont visibles uniquement avec ton compte.</p>
       ${isAdmin()?`<label>Autoriser une personne (son e-mail)</label>
         <div class="row"><div><input id="tmEmail" type="email" inputmode="email" placeholder="ex. arthur@gmail.com"></div><div style="flex:0 0 auto"><button class="btn" id="tmAdd">Ajouter</button></div></div>
-        <p class="muted" style="margin:6px 0 12px">Elle installe l'appli, appuie sur « Créer mon compte » avec cet e-mail, et c'est bon.</p>
+        <p class="muted" style="margin:6px 0 12px">Elle installe l'appli, appuie sur « Créer mon compte » avec cet e-mail et choisit son mot de passe. Ses données restent privées : toi non plus tu ne les vois pas.</p>
         <div id="tmList" class="muted">Chargement…</div>`:`<p class="muted">Pour ajouter quelqu'un, demande à l'administrateur.</p>`}
       <div class="actions" style="margin-top:16px;justify-content:space-between"><button class="btn danger" id="tmOut">Déconnexion</button><button class="btn ghost" id="tmX">Fermer</button></div>
     </div></div>`;
@@ -311,7 +310,7 @@ document.addEventListener("DOMContentLoaded",()=>{
     const F=window.FB;
     unsub=F.onSnapshot(F.collection(teamFs,"membres"), s=>{
       const L=document.getElementById("tmList"); if(!L) return;
-      const nameOf=em=>{ const p=Object.values(profils).find(x=>lower(x.email)===em); return p&&p.nom?p.nom:""; };
+      const nameOf=()=>"";
       L.innerHTML = s.empty ? "Personne d'autre pour l'instant." : `<table><tbody>${s.docs.map(d=>`<tr><td>${esc(d.id)}<div class="muted">${esc(nameOf(d.id))}</div></td><td style="width:30px"><button class="x" data-em="${esc(d.id)}" title="Retirer">×</button></td></tr>`).join("")}</tbody></table>`;
       L.querySelectorAll("[data-em]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm(`Retirer ${b.dataset.em} de l'équipe ? Il ne pourra plus voir ni saisir les activités.`,"Retirer")) return; F.deleteDoc(F.doc(teamFs,"membres/"+b.dataset.em)).catch(e=>toast(fbErr(e))); document.getElementById("teamBtn").click(); });
     }, e=>{ const L=document.getElementById("tmList"); if(L) L.textContent=fbErr(e); });
