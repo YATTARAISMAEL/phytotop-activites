@@ -744,7 +744,7 @@ function renderDetail(){
         <div style="margin-top:4px"><span class="pill ${open?"st":"cl"}">${statut(f)}</span><span class="pill ${f.public==="Revendeurs"?"rev":""}">${esc(f.public)}</span><span class="muted">${esc([f.theme,f.culture,f.produit].filter(Boolean).join(" · "))}</span></div></div>
       <div class="actions"><button class="btn ghost sm" id="dEdit">Modifier</button><button class="btn danger sm" id="dDel">Supprimer</button></div>
     </div>
-    <div class="actions"><button class="btn" id="dPdf">⬇ Rapport + liste (PDF)</button><button class="btn sec" id="dXls">⬇ Excel</button></div>
+    <div class="actions"><button class="btn" id="dPdf">📤 Rapport + liste (PDF)</button><button class="btn sec" id="dXls">⬇ Excel</button></div>
   </div>
   ${!open?`<div class="banner">${statut(f)==="Clôturée"?`Période terminée le ${fr(f.fin)} : plus d'inscription possible. Crée une nouvelle activité pour le mois suivant.`:`Les inscriptions ouvriront le ${fr(f.date)}.`}</div>`:""}
   <div class="card ${open?"":"hidden"}">
@@ -912,7 +912,7 @@ function renderVisitDetail(){
   <div class="card">
     <div class="head"><div><h2>${esc(v.planteur)}</h2><div class="muted">Visite du ${fr(v.date)}${v.tel?" · "+esc(v.tel):""}</div></div>
       <div class="actions"><button class="btn ghost sm" id="vEditB">Modifier</button><button class="btn danger sm" id="vDelB">Supprimer</button></div></div>
-    <div class="actions"><button class="btn" id="vPdf">⬇ Rapport PDF</button></div>
+    <div class="actions"><button class="btn" id="vPdf">📤 Rapport de visite (PDF)</button></div>
   </div>
   <div class="card"><div class="kv">
     <b>Cultures</b><span>${esc(v.cultures||"—")}</span>
@@ -1080,8 +1080,13 @@ function renderMissionDetail(){
   <div class="card">
     <div class="head"><div><h2>${esc(m.destination)}</h2><div class="muted">${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)} (${nbJours(m.depart,m.retour)} jours)`:fr(m.depart)}</div><div class="muted" style="margin-top:3px">${esc(m.objet||"")}</div></div>
       <div class="actions"><button class="btn ghost sm" id="mEditB">Modifier</button><button class="btn danger sm" id="mDelB">Supprimer</button></div></div>
+    <label style="margin-top:4px">Envoyer un document</label>
     <div class="actions">
-      <button class="btn sm" data-pdf="ordre">📄 Ordre de mission</button><button class="btn sm" data-pdf="rapport">📄 Rapport</button><button class="btn sm" data-pdf="justif">📄 Justificatif dépenses</button>
+      <button class="btn sm" data-pdf="ordre">📤 Ordre de mission</button>
+      <button class="btn sm" data-pdf="rapjust">📤 Rapport + justificatif</button>
+    </div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn ghost sm" data-pdf="rapport">Rapport seul</button><button class="btn ghost sm" data-pdf="justif">Justificatif seul</button>
       <button class="btn sec sm" data-pdf="tout">📦 Dossier complet</button></div>
   </div>
   <div class="card">
@@ -1111,7 +1116,7 @@ function renderMissionDetail(){
     <div class="mt"><label>Motif</label><textarea id="aMotif" placeholder="ex. Carburant pour la mission de formation à Sinfra">${esc("")}</textarea></div>
     <div class="actions" style="margin-top:10px"><button class="btn" id="aAdd">+ Créer la demande</button></div>
     ${appros.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${appros.map(a=>`<tr><td>${fr(a.date)}</td><td>${esc(a.type)}<div class="muted">${esc((a.motif||"").slice(0,60))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
-      <td style="width:46px"><button class="btn sm" data-apdf="${esc(a.id)}">📄</button></td><td style="width:24px"><button class="x" data-aid="${esc(a.id)}">×</button></td></tr>`).join("")}</tbody></table></div>`:""}
+      <td style="width:46px"><button class="btn sm" data-apdf="${esc(a.id)}" title="Envoyer la demande">📤</button></td><td style="width:24px"><button class="x" data-aid="${esc(a.id)}">×</button></td></tr>`).join("")}</tbody></table></div>`:""}
   </div>
   <div class="card"><div class="head"><h2>Rapport</h2></div><div class="kv">
     <b>Objectifs</b><span style="white-space:pre-wrap">${esc(m.objectifs||"—")}</span>
@@ -1123,7 +1128,7 @@ function renderMissionDetail(){
   ${photosCard(m.id)}`;
   watchPhotos(m.id); bindPhotos(S,m.id);
   const fn=t=>`${t}_${(m.destination||"").replace(/[^\p{L}\d\-]+/gu,"_").slice(0,30)}_${m.depart}.pdf`;
-  S.querySelectorAll("[data-pdf]").forEach(b=>b.onclick=()=>exportMission([m],b.dataset.pdf,fn({ordre:"Ordre_de_mission",rapport:"Rapport_de_mission",justif:"Justificatif_depenses",tout:"Dossier_mission"}[b.dataset.pdf])));
+  S.querySelectorAll("[data-pdf]").forEach(b=>b.onclick=()=>exportMission([m],b.dataset.pdf,fn({ordre:"Ordre_de_mission",rapport:"Rapport_de_mission",justif:"Justificatif_depenses",rapjust:"Rapport_et_justificatif_mission",tout:"Dossier_mission"}[b.dataset.pdf])));
   $("#mBack").onclick=()=>{ mOpen=null; renderMissions(); };
   $("#mEditB").onclick=()=>{ mEdit=m.id; S.innerHTML=""; renderMissions(); window.scrollTo(0,0); };
   $("#mDelB").onclick=async()=>{ if(await askConfirm(`Supprimer la mission à ${m.destination}, ses ${deps.length} dépense(s) et leurs justificatifs ?`)){ mOpen=null; delM(m.id); toast("Mission supprimée"); } };
@@ -1331,8 +1336,8 @@ async function exportMission(list,what,filename){
   const k=pdfKit(); let first=true; const page=()=>{ if(!first) k.doc.addPage(); first=false; };
   list.forEach((m,i)=>{
     if(what==="ordre"||what==="tout"){ page(); ordrePage(k,m); }
-    if(what==="rapport"||what==="tout"){ page(); rapportMissionPage(k,m,phs[i].filter(ph=>!ph.dep)); }
-    if((what==="justif"||what==="tout") && ((m.depenses||[]).length || what==="justif")){ page(); justifPage(k,m,phs[i]); }
+    if(what==="rapport"||what==="rapjust"||what==="tout"){ page(); rapportMissionPage(k,m,phs[i].filter(ph=>!ph.dep)); }
+    if((what==="justif"||what==="rapjust"||what==="tout") && ((m.depenses||[]).length || what!=="tout")){ page(); justifPage(k,m,phs[i]); }
     if(what==="tout") for(const a of (m.appros||[])){ page(); approPage(k,m,a); }
   });
   saveFile(filename,k.doc.output("blob"));
