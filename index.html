@@ -577,6 +577,7 @@ $("#profBtn").onclick=async()=>{
     <div class="mt"><label>Fonction</label><input id="prFonc" value="${esc(p.fonction||"")}" placeholder="ex. Commercial terrain"></div>
     <div class="mt"><label>Contact</label><input id="prTel" inputmode="tel" value="${esc(p.contact||"")}"></div>
     <div class="mt"><label>Zone</label><input id="prZone" value="${esc(p.zone||"")}" placeholder="ex. Centre-Ouest"></div>
+    <div class="mt"><label>Directeur Général (fiche des dépenses)</label><input id="prDG" value="${esc(p.dg??DG_DEFAUT)}"></div>
     <div class="mt"><label>Ma signature (signe avec le doigt dans le cadre)</label>
       <canvas id="sigC" width="600" height="200" style="width:100%;aspect-ratio:3/1;border:1.5px dashed #9aa79c;border-radius:9px;background:#fff;touch-action:none;display:block"></canvas>
       <div class="actions" style="margin-top:8px"><button class="btn ghost sm" id="sigClr">Effacer</button><label class="btn ghost sm" style="margin:0;color:var(--g2)">📷 Importer une photo<input type="file" id="sigFile" accept="image/*" hidden></label></div>
@@ -636,7 +637,7 @@ $("#profBtn").onclick=async()=>{
     for(const m of (data.missions||[])) if(m&&m.id) saveM(m);
     for(const ph of (data.photos||[])){ if(!ph||!ph.id||!ph.parent) continue; const {id,...b}=ph; try{ if(db) await phCol(ph.parent).doc(id).set(b); else memPhotos.push(ph); }catch(e){ console.error(e); } }
     toast("Sauvegarde importée ✓"); };
-  $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
+  $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),dg:val("prDG"),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
 };
 
 // ================= FORMATIONS =================
@@ -926,7 +927,10 @@ function renderVisitDetail(){
 }
 
 // ================= MISSIONS =================
-const CATS=["Carburant","Transport","Hébergement","Restauration","Péage / Taxes","Communication","Réparation / Entretien","Fournitures","Autre"];
+const CATS=["Carburant","Frais de séjour","Hébergement","Restauration","Transport","Péage / Taxes","Communication","Réparation / Entretien","Fournitures","Autre"];
+// rubriques de la fiche "Justificatif des dépenses de missions"
+const SECTION = c => c==="Carburant" ? 0 : (["Frais de séjour","Hébergement","Restauration"].includes(c) ? 1 : 2);
+const DG_DEFAUT = "NZI CLAUDE BERNARD";
 const PAIES=["Espèces","Mobile Money","Carte","Chèque","Virement"];
 const money = n => String(Math.round(Number(n)||0)).replace(/\B(?=(\d{3})+(?!\d))/g," ")+" FCFA";
 const num = s => Number(String(s||"").replace(/[^\d.,-]/g,"").replace(",","."))||0;
@@ -986,7 +990,7 @@ function missionEditor(m){
     <div class="row mt">
       <div><label>Km au départ</label><input id="mKm1" inputmode="numeric" value="${esc(m.kmDep||"")}"></div>
       <div><label>Km au retour</label><input id="mKm2" inputmode="numeric" value="${esc(m.kmRet||"")}"></div>
-      <div><label>Avance reçue (FCFA)</label><input id="mAv" inputmode="numeric" value="${esc(m.avance||"")}"></div>
+      <div><label>Frais de mission reçus (FCFA)</label><input id="mAv" inputmode="numeric" value="${esc(m.avance||"")}"></div>
     </div>
     <div class="row mt"><div><label>Accompagnant(s)</label><input id="mAcc" value="${esc(m.accompagnants||"")}"></div></div>
     <h3>Rapport de mission</h3>
@@ -1036,7 +1040,11 @@ function renderMissionDetail(){
       <div><label>Catégorie</label><select id="dCat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select></div>
     </div>
     <div class="row mt">
-      <div><label>Libellé</label><input id="dLib" placeholder="ex. Gasoil station Total Gagnoa"></div>
+      <div><label>Désignation</label><input id="dLib" placeholder="ex. Station Total Gagnoa, gasoil / Sinfra"></div>
+    </div>
+    <div class="row mt">
+      <div><label>Jusqu'au (séjour)</label><input type="date" id="dFin"></div>
+      <div><label>Quantité</label><input id="dQte" placeholder="ex. 40 L, 08 jours"></div>
     </div>
     <div class="row mt">
       <div><label>Montant (FCFA) *</label><input id="dMont" inputmode="numeric"></div>
@@ -1044,7 +1052,7 @@ function renderMissionDetail(){
     </div>
     <div class="actions" style="margin-top:12px"><button class="btn" id="dAdd">+ Ajouter la dépense</button></div>
     ${deps.length?`<div class="scroll" style="margin-top:14px"><table><thead><tr><th>Date</th><th>Dépense</th><th>Montant</th><th>Justif.</th><th></th></tr></thead><tbody>
-      ${deps.map(d=>{ const r=rc(d.id); return `<tr><td>${fr(d.date).slice(0,5)}</td><td>${esc(d.cat)}${d.libelle?`<div class="muted">${esc(d.libelle)}</div>`:""}<div class="muted">${esc(d.paiement||"")}</div></td><td style="white-space:nowrap">${money(d.montant)}</td>
+      ${deps.map(d=>{ const r=rc(d.id); return `<tr><td>${fr(d.date).slice(0,5)}${d.fin?`<div class="muted">au ${fr(d.fin).slice(0,5)}</div>`:""}</td><td>${esc(d.cat)}${d.libelle?`<div class="muted">${esc(d.libelle)}</div>`:""}<div class="muted">${esc([d.qte,d.paiement].filter(Boolean).join(" · "))}</div></td><td style="white-space:nowrap">${money(d.montant)}</td>
         <td>${r.map(ph=>`<img src="${ph.data}" data-phid="${esc(ph.id)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--bd);cursor:pointer;margin:0 3px 3px 0">`).join("")}
           <div class="actions" style="gap:4px"><button class="btn sec sm" data-phcam="${esc(m.id)}" data-dep="${esc(d.id)}" title="Photographier le reçu">📷</button><button class="btn ghost sm" data-phgal="${esc(m.id)}" data-dep="${esc(d.id)}" title="Choisir dans la galerie">🖼</button></div></td>
         <td><button class="x" data-did="${esc(d.id)}" title="Supprimer">×</button></td></tr>`; }).join("")}
@@ -1064,9 +1072,9 @@ function renderMissionDetail(){
   $("#mDelB").onclick=async()=>{ if(await askConfirm(`Supprimer la mission « ${m.objet} », ses ${deps.length} dépense(s) et leurs justificatifs ?`)){ mOpen=null; delM(m.id); toast("Mission supprimée"); } };
   $("#mPdf").onclick=()=>exportMissionsPdf([m], `Mission_${(m.destination||"").replace(/[^\p{L}\d\-]+/gu,"_").slice(0,40)}_${m.depart}.pdf`);
   $("#dAdd").onclick=()=>{
-    const d={id:uid("d"),date:val("dDate"),cat:val("dCat"),libelle:val("dLib"),montant:num(val("dMont")),paiement:val("dPaie")};
+    const d={id:uid("d"),date:val("dDate"),cat:val("dCat"),libelle:val("dLib"),qte:val("dQte"),montant:num(val("dMont")),paiement:val("dPaie")}; if(val("dFin")&&val("dFin")>d.date) d.fin=val("dFin");
     if(!d.montant) return toast("Mets le montant");
-    ["dLib","dMont"].forEach(id=>document.getElementById(id).value="");
+    ["dLib","dMont","dQte","dFin"].forEach(id=>document.getElementById(id).value="");
     saveM({...m,depenses:[...(m.depenses||[]),d]}); toast(`✓ ${money(d.montant)} ajouté — photographie le reçu avec 📷`);
   };
   S.querySelectorAll("[data-did]").forEach(b=>b.onclick=async()=>{ const d=deps.find(x=>x.id===b.dataset.did);
@@ -1095,28 +1103,48 @@ function missionPages(k,m,phs){
   const blocks=[["OBJECTIFS DE LA MISSION",m.objectifs],["ACTIVITÉS RÉALISÉES",[m.activites,acts.map(a=>"• "+a).join("\n")].filter(Boolean).join("\n")],["RÉSULTATS OBTENUS",m.resultats],["DIFFICULTÉS RENCONTRÉES",m.difficultes],["RECOMMANDATIONS / SUITE À DONNER",m.recommandations]];
   tbl({startY:y,body:blocks.flatMap(([t,v])=>[[{content:t,styles:{fontStyle:"bold",fillColor:[242,246,242]}}],[{content:v||"",styles:{minCellHeight:v?0:14,valign:"top"}}]])});
   y=doc.lastAutoTable.finalY+5;
-  tbl({startY:y,body:[["Total des dépenses",money(tot)],["Avance reçue",av?money(av):"—"],[av>=tot?"Reste à reverser":"Reste à rembourser à l'agent",av?money(Math.abs(av-tot)):money(tot)]],columnStyles:{0:{...B,cellWidth:60},1:{fontStyle:"bold"}},tableWidth:120});
+  tbl({startY:y,body:[["Total des dépenses",money(tot)],["Frais de mission reçus",av?money(av):"—"],[av>=tot?"Reste à reverser":"Reste à rembourser à l'agent",av?money(Math.abs(av-tot)):money(tot)]],columnStyles:{0:{...B,cellWidth:60},1:{fontStyle:"bold"}},tableWidth:120});
   sigBlock(k,doc.lastAutoTable.finalY+5,`Fait le ${fr(m.retour||m.depart)}`,p);
-  // page 2 : état des dépenses
+  // page 2 : JUSTIFICATIF DES DÉPENSES DE MISSIONS (modèle PhytoTop)
   if(deps.length){
-    doc.addPage(); k.brand(); under("ÉTAT DES DÉPENSES ET JUSTIFICATIFS",22,13);
-    doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.text(`${m.objet||""} — ${m.destination||""} — ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)}`,W/2,28,{align:"center"});
     const has=id=>phs.some(ph=>ph.dep===id);
-    let n=0; const jn={}; deps.forEach((d,i)=>{ if(has(d.id)) jn[d.id]=++n; });
-    tbl({startY:33,head:[["N°","Date","Catégorie","Libellé","Paiement","Montant","Justif."]],body:deps.map((d,i)=>[i+1,fr(d.date),d.cat||"",d.libelle||"",d.paiement||"",money(d.montant),jn[d.id]?"J"+jn[d.id]:"—"]),
-      foot:[[{content:"TOTAL",colSpan:5,styles:{halign:"right"}},money(tot),""]],footStyles:{fillColor:[242,246,242],textColor:0,fontStyle:"bold",lineColor:[60,60,60],lineWidth:.25},
-      columnStyles:{0:{cellWidth:9,halign:"center"},1:{cellWidth:21},2:{cellWidth:32},4:{cellWidth:24},5:{cellWidth:28,halign:"right"},6:{cellWidth:14,halign:"center"}}});
-    const byCat={}; deps.forEach(d=>byCat[d.cat]=(byCat[d.cat]||0)+num(d.montant));
-    y=doc.lastAutoTable.finalY+5;
-    tbl({startY:y,head:[["Récapitulatif par catégorie","Montant"]],body:Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>[c,money(v)]),tableWidth:110,columnStyles:{1:{halign:"right"}}});
-    y=doc.lastAutoTable.finalY+6;
-    const sansJ=deps.filter(d=>!jn[d.id]).length;
-    if(sansJ){ doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.text(`${sansJ} dépense(s) sans justificatif.`,L,y); y+=5; }
-    if(y+30>H-12){ doc.addPage(); y=20; }
-    const bw=(R-L-8)/2;
-    doc.setLineWidth(.25); doc.rect(L,y,bw,26); doc.rect(L+bw+8,y,bw,26);
-    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.text("Le missionnaire",L+2,y+4); doc.text("Visa du responsable",L+bw+10,y+4);
-    drawSig(k,L+4,y+5,bw-8,15,p); doc.setFont("helvetica","normal"); if(p.nom) doc.text(p.nom,L+bw/2,y+24,{align:"center"});
+    let n=0; const jn={}; deps.forEach(d=>{ if(has(d.id)) jn[d.id]=++n; });
+    doc.addPage();
+    try{ doc.addImage(LOGO,"JPEG",L,6,15*LOGO_R,15); }catch(e){}
+    doc.setFont("helvetica","italic"); doc.setFontSize(7.5); doc.setTextColor(200,30,30); doc.text("Le Top de la protection phytosanitaire",L+1,24); doc.setTextColor(0);
+    doc.setFont("helvetica","bold"); doc.setFontSize(13.5); doc.text("JUSTIFICATIF DES DÉPENSES DE MISSIONS",W/2+10,31,{align:"center"});
+    const line=(lab,v,x,y,x2,size=10)=>{ doc.setFont("helvetica","bold"); doc.setFontSize(size); doc.text(lab,x,y); const lx=x+doc.getTextWidth(lab)+1.5;
+      doc.setFont("helvetica","normal"); doc.setFontSize(9.5); const t=doc.splitTextToSize(String(v||""),x2-lx)[0]||""; doc.text(t,lx,y-.8); k.dots(lx,x2,y+.6); };
+    line("Nom et Prénoms :",p.nom,L+8,40,L+120,11);
+    line("OBJET MISSION :",[m.objet,m.destination].filter(Boolean).join(" — "),L+8,47,R-48,9);
+    line("DATE :",fr(m.retour||m.depart),R-44,47,R,9);
+    line("PÉRIODE :",m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart),L+8,54,L+110,9);
+    const secs=[["CARBURANT VÉHICULE (lieu, Type de carburant)",7],["FRAIS DE SÉJOUR",4],["DIVERSES DÉPENSES",4]];
+    const body=[]; const tots=[0,0,0];
+    secs.forEach(([title,minRows],si)=>{
+      const ds=deps.filter(d=>SECTION(d.cat)===si);
+      body.push([{content:title,colSpan:4,styles:{fontStyle:"bold",fontSize:8.5,cellPadding:{top:1.6,bottom:1.2,left:1.5,right:1.5}}}]);
+      ds.forEach(d=>{ tots[si]+=num(d.montant);
+        const des=[si===2&&d.cat!=="Autre"?d.cat:"", d.libelle, jn[d.id]?`(J${jn[d.id]})`:""].filter(Boolean).join(" — ").replace(" — (","  (");
+        body.push([d.fin?`${fr(d.date).slice(0,5)} au ${fr(d.fin).slice(0,5)}/${d.fin.slice(2,4)}`:fr(d.date), des||d.cat, d.qte||"", money(d.montant).replace(" FCFA","")]); });
+      for(let i=ds.length;i<minRows;i++) body.push(["","","",""]);
+      body.push([{content:"SOUS TOTAL",colSpan:3,styles:{halign:"right",fontStyle:"bold",fontSize:8,lineWidth:{top:.25,bottom:0,left:0,right:0}}},{content:tots[si]?money(tots[si]).replace(" FCFA",""):"",styles:{fontStyle:"bold",halign:"right"}}]);
+      body.push([{content:"",colSpan:4,styles:{minCellHeight:3,lineWidth:0}}]);
+    });
+    doc.autoTable({startY:60,theme:"grid",margin:{left:L+4,right:L+4,bottom:20},head:[["DATE","DÉSIGNATION","QUANTITÉ","MONTANT"]],body,
+      styles:{fontSize:9,cellPadding:1.2,minCellHeight:5.8,valign:"middle",lineColor:[40,40,40],lineWidth:.25,textColor:20},
+      headStyles:{fillColor:[255,255,255],textColor:0,fontStyle:"bold",halign:"center",fontSize:10,lineWidth:.4,lineColor:[40,40,40]},
+      columnStyles:{0:{cellWidth:30},2:{cellWidth:28,halign:"center"},3:{cellWidth:34,halign:"right"}}});
+    let y=doc.lastAutoTable.finalY+4; if(y+38>H-19){ doc.addPage(); y=20; }
+    const av=num(m.avance), diff=tot-av;
+    doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.text("DIRECTEUR GÉNÉRAL",L+6,y+4);
+    doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.text(p.dg??DG_DEFAUT,L+6,y+10);
+    // le missionnaire (ta signature)
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.text("Le missionnaire : "+(p.nom||""),L+6,y+20); drawSig(k,L+6,y+21,45,15,p);
+    doc.autoTable({startY:y,theme:"plain",margin:{left:R-86,right:L+4},tableWidth:82,body:[["DÉPENSES TOTALES",money(tot).replace(" FCFA","")],["FRAIS DE MISSION",av?money(av).replace(" FCFA",""):""],[diff>=0?"DIFFÉRENCE À REMBOURSER":"DIFFÉRENCE À REVERSER",av?money(Math.abs(diff)).replace(" FCFA",""):""]],
+      styles:{fontSize:8.5,cellPadding:1.6,fontStyle:"bold",textColor:20},columnStyles:{0:{cellWidth:50},1:{cellWidth:32,halign:"right",lineWidth:.3,lineColor:[40,40,40]}}});
+    doc.setDrawColor(200,30,30); doc.setLineWidth(.5); doc.line(L,H-17,R,H-17); doc.setDrawColor(0);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(200,30,30); doc.text("PHYTOSANITAIRES - MATÉRIELS DE TRAITEMENTS - SEMENCES - ENGRAIS",W/2,H-11.5,{align:"center"}); doc.setTextColor(0);
     // justificatifs
     const rec=deps.filter(d=>jn[d.id]).flatMap(d=>phs.filter(ph=>ph.dep===d.id).map(ph=>({...ph,lab:`J${jn[d.id]} — ${d.cat}${d.libelle?" — "+d.libelle:""} — ${money(d.montant)} — ${fr(d.date)}`})));
     for(let i=0;i<rec.length;i+=4){
@@ -1140,12 +1168,12 @@ async function exportMissionsPdf(list,filename){
 async function exportMissionsXls(list){
   if(!window.XLSX){ toast("Module Excel non chargé, vérifie ta connexion"); return; }
   const phs=await Promise.all(list.map(m=>getPhotos(m.id)));
-  const rows=[["Mission","Destination","Date","Catégorie","Libellé","Paiement","Montant (FCFA)","Justificatif"]];
-  list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.objet||"",m.destination||"",fr(d.date),d.cat||"",d.libelle||"",d.paiement||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
-  rows.push([],["","","","","","TOTAL",list.reduce((s,m)=>s+totalDep(m),0),""]);
+  const rows=[["Mission","Destination","Date","Au","Rubrique","Catégorie","Désignation","Quantité","Paiement","Montant (FCFA)","Justificatif"]];
+  list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.objet||"",m.destination||"",fr(d.date),fr(d.fin||""),["Carburant véhicule","Frais de séjour","Diverses dépenses"][SECTION(d.cat)],d.cat||"",d.libelle||"",d.qte||"",d.paiement||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
+  rows.push([],["","","","","","","","","TOTAL",list.reduce((s,m)=>s+totalDep(m),0),""]);
   const sum=[["Objet","Destination","Départ","Retour","Jours","Km","Nb dépenses","Total (FCFA)","Avance (FCFA)","Solde (FCFA)"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance), km=(num(m.kmRet)&&num(m.kmDep))?num(m.kmRet)-num(m.kmDep):""; return [m.objet||"",m.destination||"",fr(m.depart),fr(m.retour),nbJours(m),km,(m.depenses||[]).length,t,av||"",av?av-t:""]; })];
   const wb=XLSX.utils.book_new(), w1=XLSX.utils.aoa_to_sheet(rows), w2=XLSX.utils.aoa_to_sheet(sum);
-  w1["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:20},{wch:30},{wch:14},{wch:15},{wch:12}]; w2["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:11},{wch:6},{wch:8},{wch:11},{wch:14},{wch:14},{wch:14}];
+  w1["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:11},{wch:18},{wch:18},{wch:30},{wch:12},{wch:14},{wch:15},{wch:12}]; w2["!cols"]=[{wch:30},{wch:24},{wch:11},{wch:11},{wch:6},{wch:8},{wch:11},{wch:14},{wch:14},{wch:14}];
   XLSX.utils.book_append_sheet(wb,w1,"Dépenses"); XLSX.utils.book_append_sheet(wb,w2,"Missions");
   saveFile(`Depenses_missions_${mMonth||"toutes"}.xlsx`,XLSX.write(wb,{bookType:"xlsx",type:"array"}));
 }
