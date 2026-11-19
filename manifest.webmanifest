@@ -1,6 +1,6 @@
 {
-  "name": "PhytoTop Activités",
-  "short_name": "PhytoTop",
+  "name": "RAPHYTYA - Rapport PhytoTop de Yattara",
+  "short_name": "RAPHYTYA",
   "description": "Formations, réunions, visites plantation : listes de présence et rapports PhytoTop.",
   "start_url": "./",
   "scope": "./",
