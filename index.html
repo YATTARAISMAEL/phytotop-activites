@@ -1060,10 +1060,11 @@ function approCard(){
       <div><label>Date</label><input type="date" id="apDate" value="${esc(today())}"></div></div>
     <div class="row mt"><div><label>Montant (FCFA) *</label><input id="apMont" inputmode="numeric" placeholder="ex. 150000"></div>
       <div id="apCarteBox" style="display:none"><label>N° de carte</label><input id="apCarte" value="${esc(p.carte||"")}"></div></div>
+    <div class="mt"><label>Numéro de dépôt</label><input id="apDepot" placeholder="ex. numéro du dépôt / de l'agence"></div>
     <div class="mt"><label>Motif *</label><textarea id="apMotif" placeholder="ex. Frais de fonctionnement de la zone de Gagnoa pour décembre"></textarea></div>
     <div id="apLet" class="muted mt"></div>
     <div class="actions" style="margin-top:10px"><button class="btn" id="apAdd">✓ Créer et voir le PDF</button></div>`:""}
-    ${L.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${L.map(a=>`<tr><td>${fr(a.date)}</td><td><b>${esc(a.type)}</b><div class="muted">${esc((a.motif||"").slice(0,70))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
+    ${L.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${L.map(a=>`<tr><td>${fr(a.date)}</td><td><b>${esc(a.type)}</b>${a.depot?` <span class="muted">· Dépôt ${esc(a.depot)}</span>`:""}<div class="muted">${esc((a.motif||"").slice(0,70))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
       <td style="white-space:nowrap"><button class="btn sm" data-appdf="${esc(a.id)}">📤</button> <button class="btn ghost sm" data-apdel="${esc(a.id)}">🗑</button></td></tr>`).join("")}</tbody></table></div>`:(apOpen?"":`<div class="muted">Aucune demande${mMonth?" ce mois-ci":""}. Touche « + Nouvelle demande » pour une demande de caisse ou de carte.</div>`)}
   </div>`;
 }
@@ -1073,7 +1074,7 @@ function bindApproCard(){
   const ty=document.getElementById("apType");
   if(ty){ const upd=()=>{ document.getElementById("apCarteBox").style.display=ty.value==="Carte"?"":"none"; }; ty.onchange=upd; upd();
     const mo=document.getElementById("apMont"); mo.oninput=()=>{ const n=num(mo.value); document.getElementById("apLet").textContent=n?("En lettres : "+enLettres(n)+" francs CFA"):""; };
-    document.getElementById("apAdd").onclick=()=>{ const a={id:uid("a"),type:val("apType"),date:val("apDate")||today(),montant:num(val("apMont")),carte:val("apType")==="Carte"?val("apCarte"):"",motif:val("apMotif"),createdAt:Date.now()};
+    document.getElementById("apAdd").onclick=()=>{ const a={id:uid("a"),type:val("apType"),date:val("apDate")||today(),montant:num(val("apMont")),carte:val("apType")==="Carte"?val("apCarte"):"",depot:val("apDepot"),motif:val("apMotif"),createdAt:Date.now()};
       if(!a.montant) return toast("Mets le montant demandé"); if(!a.motif) return toast("Indique le motif de la demande");
       apOpen=false; saveA(a); toast("Demande enregistrée ✓"); exportAppro({createdBy:a.createdBy||(ME()&&ME().uid)},a); };
   }
@@ -1193,6 +1194,7 @@ function renderMissionDetail(){
       <div><label>Date</label><input type="date" id="aDate" value="${esc(today())}"></div>
     </div>
     <div class="row mt"><div><label>Montant (FCFA) *</label><input id="aMont" inputmode="numeric"></div><div><label>N° de carte</label><input id="aCarte" value="${esc(p.carte||"")}"></div></div>
+    <div class="mt"><label>Numéro de dépôt</label><input id="aDepot"></div>
     <div class="mt"><label>Motif</label><textarea id="aMotif" placeholder="ex. Carburant pour la mission de formation à Sinfra">${esc("")}</textarea></div>
     <div class="actions" style="margin-top:10px"><button class="btn" id="aAdd">+ Créer la demande</button></div>
     ${appros.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${appros.map(a=>`<tr><td>${fr(a.date)}</td><td>${esc(a.type)}<div class="muted">${esc((a.motif||"").slice(0,60))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
@@ -1231,9 +1233,9 @@ function renderMissionDetail(){
     if(!await askConfirm(`Supprimer cette dépense de ${money(d.montant)} et son justificatif ?`)) return;
     for(const ph of rc(d.id)) await delPhoto(ph);
     saveM({...m,depenses:(m.depenses||[]).filter(x=>x.id!==d.id)}); });
-  $("#aAdd").onclick=()=>{ const a={id:uid("a"),type:val("aType"),date:val("aDate"),montant:num(val("aMont")),carte:val("aCarte"),motif:val("aMotif")};
+  $("#aAdd").onclick=()=>{ const a={id:uid("a"),type:val("aType"),date:val("aDate"),montant:num(val("aMont")),carte:val("aCarte"),depot:val("aDepot"),motif:val("aMotif")};
     if(!a.montant) return toast("Mets le montant demandé");
-    ["aMont","aMotif"].forEach(id=>document.getElementById(id).value="");
+    ["aMont","aMotif","aDepot"].forEach(id=>document.getElementById(id).value="");
     saveM({...m,appros:[...(m.appros||[]),a]}); toast("Demande créée — touche 📄 pour l'imprimer"); };
   S.querySelectorAll("[data-apdf]").forEach(b=>b.onclick=()=>{ const a=appros.find(x=>x.id===b.dataset.apdf); exportAppro(m,a); });
   S.querySelectorAll("[data-aid]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm("Supprimer cette demande d'approvisionnement ?")) return; saveM({...m,appros:(m.appros||[]).filter(x=>x.id!==b.dataset.aid)}); });
@@ -1394,7 +1396,7 @@ function approPage(k,m,a){
   doc.setLineWidth(.35); doc.rect(W/2-tw/2-4,40,tw+8,8); doc.setLineWidth(.15); doc.rect(W/2-tw/2-3,41,tw+6,6); doc.text(title,W/2,45.6,{align:"center"});
   doc.setFont("times","bold"); doc.setFontSize(9.5); doc.text("Demandeur",L,60);
   champ(k,"Nom et Prénom :",m.missNom||p.nom,L,69,L+100,{size:9.5}); champ(k,"Zone :",p.zone,L+106,69,R,{size:9.5});
-  champ(k,"DATE :",fr(a.date),L,80,L+52,{size:9.5});
+  champ(k,"DATE :",fr(a.date),L,80,L+52,{size:9.5}); champ(k,"N° DE DÉPÔT :",a.depot,L+62,80,R,{size:9.5});
   doc.setLineWidth(.25); doc.rect(R-72,88,72,13); doc.setFont("times","bold"); doc.setFontSize(10.5); doc.text("MONTANT",R-69,97);
   doc.setFontSize(11); doc.text(amt(a.montant),R-20,96.2,{align:"right"}); dotsLine(k,R-48,R-19,97.2); doc.setFontSize(10.5); doc.text("FCFA",R-17.5,97);
   let rest=champ(k,"MONTANT EN LETTRE",enLettres(a.montant)+" francs CFA",L,114,R,{size:9});
@@ -1434,7 +1436,7 @@ async function exportMissionsXls(list){
   list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.destination||"",m.objet||"",RUBS[rubOf(d)],fr(d.date),fr(d.fin||""),d.lieu||d.libelle||"",d.type||"",num(d.pu)||"",d.qte||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
   rows.push([],["","","","","","","","","TOTAL",list.reduce((s,m)=>s+totalDep(m),0),""]);
   const sum=[["Lieu","Objet","Départ","Retour","Jours","Nb dépenses","Dépenses totales","Frais de mission","Différence"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance); return [m.destination||"",m.objet||"",fr(m.depart),fr(m.retour),nbJours(m.depart,m.retour),(m.depenses||[]).length,t,av||"",av?t-av:""]; })];
-  const ap=[["Mission","Type","Date","Montant (FCFA)","N° carte","Motif"],...list.flatMap(m=>(m.appros||[]).map(a=>[m.destination||"",a.type,fr(a.date),num(a.montant),a.carte||"",a.motif||""]))];
+  const ap=[["Mission","Type","Date","Montant (FCFA)","N° carte","N° de dépôt","Motif"],...list.flatMap(m=>(m.appros||[]).map(a=>[m.destination||"",a.type,fr(a.date),num(a.montant),a.carte||"",a.depot||"",a.motif||""])),...appros.filter(a=>!mMonth||(a.date||"").startsWith(mMonth)).map(a=>["(sans mission)",a.type,fr(a.date),num(a.montant),a.carte||"",a.depot||"",a.motif||""])];
   const wb=XLSX.utils.book_new(), w1=XLSX.utils.aoa_to_sheet(rows), w2=XLSX.utils.aoa_to_sheet(sum), w3=XLSX.utils.aoa_to_sheet(ap);
   w1["!cols"]=[{wch:22},{wch:34},{wch:18},{wch:11},{wch:11},{wch:28},{wch:14},{wch:14},{wch:10},{wch:15},{wch:12}];
   w2["!cols"]=[{wch:22},{wch:34},{wch:11},{wch:11},{wch:6},{wch:11},{wch:15},{wch:15},{wch:13}]; w3["!cols"]=[{wch:22},{wch:8},{wch:11},{wch:15},{wch:16},{wch:40}];
