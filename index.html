@@ -1172,7 +1172,7 @@ function renderMissionDetail(){
   </div>
   <div class="card">
     <div class="head"><h2>Dépenses</h2></div>
-    <div class="stats"><div class="stat"><b>${money(tot)}</b><span>dépenses totales</span></div><div class="stat"><b>${av?money(av):"—"}</b><span>frais de mission</span></div>${av?`<div class="stat"><b>${money(Math.abs(tot-av))}</b><span>${tot>=av?"différence à rembourser":"à reverser"}</span></div>`:""}</div>
+    <div class="stats"><div class="stat"><b>${money(tot)}</b><span>dépenses totales</span></div><div class="stat"><b>${money(av)}</b><span>frais de mission reçus</span></div><div class="stat"><b>${money(Math.abs(tot-av))}</b><span>${tot>=av?"différence à rembourser":"différence à reverser"}</span></div></div>${av?"":`<div class="muted mt">Frais de mission reçus non renseignés : la différence à rembourser est égale au total des dépenses. Pour les indiquer : <b>Modifier</b> → « Frais de mission reçus ».</div>`}
     ${sansJ?`<p class="muted" style="margin:8px 0 0">⚠ ${sansJ} dépense(s) sans justificatif</p>`:""}
     <h3>Ajouter une dépense</h3>
     <div class="seg" id="dRubSeg">${RUBS.map((r,i)=>`<button data-r="${i}" class="${i===dRub?"on":""}">${r.replace(" véhicule","").replace("Diverses dépenses","Diverses")}</button>`).join("")}</div>
@@ -1366,7 +1366,7 @@ function justifPage(k,m,phs){
   const tot=totalDep(m), av=num(m.avance), diff=tot-av;
   const footTop=H-8-String((p&&p.footer)||FOOTER_DEFAUT).split("\n").slice(0,5).length*3.3-7;
   if(y+40>footTop-4){ piedDePage(k,p); doc.addPage(); enTete(k); y=36; }
-  const bx=R-28, rows=[["DEPENSES TOTALES",amt(tot)],["FRAIS DE MISSION",amt(av)],[diff>=0?"DIFFERENCE A REMBOUSER":"DIFFERENCE A REVERSER",av?amt(Math.abs(diff)):""]];
+  const bx=R-28, z=n=>amt(n)||"0", rows=[["DEPENSES TOTALES",z(tot)],["FRAIS DE MISSION",z(av)],[diff>=0?"DIFFERENCE A REMBOURSER":"DIFFERENCE A REVERSER",z(Math.abs(diff))]];
   doc.setFont("times","bold"); doc.setFontSize(8.3);
   rows.forEach(([t,v],i)=>{ const yy=y+i*5.6; doc.text(t,bx-1.5,yy+4,{align:"right"}); doc.setLineWidth(.3); doc.rect(bx,yy,28,5.6); if(v) doc.text(v,R-1.5,yy+4,{align:"right"}); });
   y+=24;
@@ -1435,7 +1435,7 @@ async function exportMissionsXls(list){
   const rows=[["Mission (lieu)","Objet","Rubrique","Date","Au","Lieu / Désignation","Type carburant","Prix unitaire / forfait","Quantité","Montant (FCFA)","Justificatif"]];
   list.forEach((m,i)=>(m.depenses||[]).slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>rows.push([m.destination||"",m.objet||"",RUBS[rubOf(d)],fr(d.date),fr(d.fin||""),d.lieu||d.libelle||"",d.type||"",num(d.pu)||"",d.qte||"",num(d.montant),phs[i].some(ph=>ph.dep===d.id)?"Oui":"Non"])));
   rows.push([],["","","","","","","","","TOTAL",list.reduce((s,m)=>s+totalDep(m),0),""]);
-  const sum=[["Lieu","Objet","Départ","Retour","Jours","Nb dépenses","Dépenses totales","Frais de mission","Différence"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance); return [m.destination||"",m.objet||"",fr(m.depart),fr(m.retour),nbJours(m.depart,m.retour),(m.depenses||[]).length,t,av||"",av?t-av:""]; })];
+  const sum=[["Lieu","Objet","Départ","Retour","Jours","Nb dépenses","Dépenses totales","Frais de mission","Différence"],...list.map(m=>{ const t=totalDep(m), av=num(m.avance); return [m.destination||"",m.objet||"",fr(m.depart),fr(m.retour),nbJours(m.depart,m.retour),(m.depenses||[]).length,t,av||"",t-av]; })];
   const ap=[["Mission","Type","Date","Montant (FCFA)","N° carte","N° de dépôt","Motif"],...list.flatMap(m=>(m.appros||[]).map(a=>[m.destination||"",a.type,fr(a.date),num(a.montant),a.carte||"",a.depot||"",a.motif||""])),...appros.filter(a=>!mMonth||(a.date||"").startsWith(mMonth)).map(a=>["(sans mission)",a.type,fr(a.date),num(a.montant),a.carte||"",a.depot||"",a.motif||""])];
   const wb=XLSX.utils.book_new(), w1=XLSX.utils.aoa_to_sheet(rows), w2=XLSX.utils.aoa_to_sheet(sum), w3=XLSX.utils.aoa_to_sheet(ap);
   w1["!cols"]=[{wch:22},{wch:34},{wch:18},{wch:11},{wch:11},{wch:28},{wch:14},{wch:14},{wch:10},{wch:15},{wch:12}];
