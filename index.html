@@ -426,7 +426,7 @@ let profils={};
 const profilFor = o => (o && o.createdBy && profils[o.createdBy]) || profil || {};
 
 // ================= store =================
-let formations = [], visites = [], missions = [], profil = {};
+let formations = [], visites = [], missions = [], appros = [], profil = {};
 let PROFIL_PATH = "config/profil";
 const ME = () => window.ME || null;
 let db = null, dl = null, loaded = false;
@@ -462,6 +462,9 @@ function saveM(m){ if(!m.createdBy && ME()) m={...m,createdBy:ME().uid}; m={...m
     return; }
   enqueue(m.id, ()=>db.collection("missions").doc(m.id).set(clean(m))); }
 function delM(id){ missions=missions.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("missions").doc(id).delete()); }
+function saveA(a){ if(!a.createdBy && ME()) a={...a,createdBy:ME().uid}; const i=appros.findIndex(x=>x.id===a.id); if(i>=0) appros[i]=a; else appros.push(a); renderAll();
+  if(db) enqueue(a.id, ()=>db.collection("appros").doc(a.id).set(clean(a))); }
+function delA(id){ appros=appros.filter(x=>x.id!==id); renderAll(); if(db) enqueue(id, ()=>db.collection("appros").doc(id).delete()); }
 function delV(id){ visites=visites.filter(x=>x.id!==id); renderAll(); delPhotosOf(id); if(db) enqueue(id, ()=>db.collection("visites").doc(id).delete()); }
 // ===== Photos (une photo = un document, rangé sous sa formation ou sa visite : photos/<id>/items/<photo>) =====
 const phCol = parent => db.collection("photos/"+parent+"/items");
@@ -545,6 +548,7 @@ function setBanner(html){ $("#banner").innerHTML = html ? `<div class="banner">$
   let fOk=false, vOk=false;
   db.collection("formations").onSnapshot(s=>{ formations=s.docs.map(d=>nf({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); if(!s.metadata.fromCache && !fOk){ fOk=true; done(); } renderAll(); }, fail);
   db.collection("missions").onSnapshot(s=>{ missions=s.docs.map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); renderAll(); }, ()=>{});
+  db.collection("appros").onSnapshot(s=>{ appros=s.docs.map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); renderAll(); }, ()=>{});
   db.collection("visites").onSnapshot(s=>{ visites=s.docs.map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})); if(!s.metadata.fromCache && !vOk){ vOk=true; done(); } renderAll(); }, fail);
   db.doc(PROFIL_PATH).onSnapshot(s=>{ if(s.exists){ profil=JSON.parse(JSON.stringify(s.data())); refreshSig(); renderAll(); } }, ()=>{});
 })();
@@ -606,7 +610,7 @@ function renderAll(){
   renderRappels(); if(loaded && !_notifDone){ _notifDone=true; setTimeout(()=>notifRappels(false),1500); }
   if(tab==="form") preserve("#tab-form", renderForm);
   if(tab==="visites") renderVisites();
-  if(tab==="missions") renderMissions();
+  if(tab==="missions"){ preserve("#tab-missions", renderMissions); const t=document.getElementById("apType"); if(t&&t.onchange) t.onchange(); }
   if(tab==="listes") renderListes();
   if(tab==="contacts") renderContacts();
 }
@@ -673,18 +677,19 @@ $("#profBtn").onclick=async()=>{
   $("#prX").onclick=()=>root.innerHTML="";
   $("#bkExp").onclick=async()=>{ toast("Préparation de la sauvegarde…");
     const photos=[]; for(const o of [...formations,...visites,...missions]) photos.push(...await getPhotos(o.id));
-    const data={app:"phytotop-activites",version:2,exportedAt:new Date().toISOString(),profil,formations,visites,missions,photos};
+    const data={app:"phytotop-activites",version:2,exportedAt:new Date().toISOString(),profil,formations,visites,missions,appros,photos};
     saveFile(`Sauvegarde_PhytoTop_${today()}.json`, JSON.stringify(data)); };
   $("#bkImp").onchange=async e=>{ const file=e.target.files[0]; if(!file) return;
     let data; try{ data=JSON.parse(await file.text()); }catch(err){ return toast("Fichier de sauvegarde illisible"); }
     if(!data||data.app!=="phytotop-activites") return toast("Ce n'est pas une sauvegarde PhytoTop");
-    const nf2=(data.formations||[]).length, nv2=(data.visites||[]).length, np2=(data.photos||[]).length, nm2=(data.missions||[]).length;
+    const nf2=(data.formations||[]).length, nv2=(data.visites||[]).length, np2=(data.photos||[]).length, nm2=(data.missions||[]).length, na2=(data.appros||[]).length;
     root.innerHTML="";
-    if(!await askConfirm(`Importer ${nf2} formation(s), ${nv2} visite(s), ${nm2} mission(s) et ${np2} photo(s) ? Les éléments déjà présents avec le même identifiant seront remplacés.`,"Importer")) return;
+    if(!await askConfirm(`Importer ${nf2} formation(s), ${nv2} visite(s), ${nm2} mission(s), ${na2} demande(s) d'approvisionnement et ${np2} photo(s) ? Les éléments déjà présents avec le même identifiant seront remplacés.`,"Importer")) return;
     if(data.profil && Object.keys(data.profil).length) saveProfil(data.profil);
     for(const f of (data.formations||[])) if(f&&f.id) saveF(f);
     for(const v of (data.visites||[])) if(v&&v.id) saveV(v);
     for(const m of (data.missions||[])) if(m&&m.id) saveM(m);
+    for(const a of (data.appros||[])) if(a&&a.id) saveA(a);
     for(const ph of (data.photos||[])){ if(!ph||!ph.id||!ph.parent) continue; const {id,...b}=ph; try{ if(db) await phCol(ph.parent).doc(id).set(b); else memPhotos.push(ph); }catch(e){ console.error(e); } }
     toast("Sauvegarde importée ✓"); };
   $("#prOk").onclick=()=>{ saveProfil({nom:val("prNom"),fonction:val("prFonc"),contact:val("prTel"),zone:val("prZone"),dg:val("prDG"),carte:val("prCarte"),footer:document.getElementById("prFoot").value.trim(),signature:exportSig()}); root.innerHTML=""; toast("Profil enregistré"); };
@@ -1030,6 +1035,7 @@ function renderMissions(){
     <div class="stats" style="margin-top:12px"><div class="stat"><b>${list.length}</b><span>missions</span></div><div class="stat"><b>${money(tot)}</b><span>dépenses du mois</span></div></div>
     <div class="actions" style="margin-top:12px"><button class="btn sec" id="mPdfM">⬇ Dossiers du mois (PDF)</button><button class="btn ghost" id="mXlsM">⬇ Excel des dépenses</button></div>
   </div>
+  ${approCard()}
   <div class="card flist">${list.length?list.map(m=>`
     <div class="item" data-id="${esc(m.id)}">
       <div><div class="t">${esc(m.destination||"Mission")} <span class="muted">· ${m.retour&&m.retour!==m.depart?`du ${fr(m.depart)} au ${fr(m.retour)}`:fr(m.depart)}</span></div>
@@ -1042,6 +1048,37 @@ function renderMissions(){
   $("#mPdfM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMission(sel(),"tout",`Missions_${mMonth||"toutes"}.pdf`); };
   $("#mXlsM").onclick=()=>{ if(!list.length) return toast("Aucune mission ce mois-ci"); exportMissionsXls(sel()); };
   S.querySelectorAll(".item").forEach(it=>it.onclick=()=>{ mOpen=it.dataset.id; renderMissions(); window.scrollTo(0,0); });
+  bindApproCard();
+}
+let apOpen=false;
+function approCard(){
+  const p=profil||{}, L=[...appros].filter(a=>!mMonth||(a.date||"").startsWith(mMonth)).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  return `<div class="card" id="apCard">
+    <div class="head"><h2>💰 Demandes d'approvisionnement</h2><button class="btn ${apOpen?"ghost":""} sm" id="apTog">${apOpen?"Fermer":"+ Nouvelle demande"}</button></div>
+    ${apOpen?`<div class="row">
+      <div><label>Approvisionnement de</label><select id="apType"><option selected>Caisse</option><option>Carte</option></select></div>
+      <div><label>Date</label><input type="date" id="apDate" value="${esc(today())}"></div></div>
+    <div class="row mt"><div><label>Montant (FCFA) *</label><input id="apMont" inputmode="numeric" placeholder="ex. 150000"></div>
+      <div id="apCarteBox" style="display:none"><label>N° de carte</label><input id="apCarte" value="${esc(p.carte||"")}"></div></div>
+    <div class="mt"><label>Motif *</label><textarea id="apMotif" placeholder="ex. Frais de fonctionnement de la zone de Gagnoa pour décembre"></textarea></div>
+    <div id="apLet" class="muted mt"></div>
+    <div class="actions" style="margin-top:10px"><button class="btn" id="apAdd">✓ Créer et voir le PDF</button></div>`:""}
+    ${L.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${L.map(a=>`<tr><td>${fr(a.date)}</td><td><b>${esc(a.type)}</b><div class="muted">${esc((a.motif||"").slice(0,70))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
+      <td style="white-space:nowrap"><button class="btn sm" data-appdf="${esc(a.id)}">📤</button> <button class="btn ghost sm" data-apdel="${esc(a.id)}">🗑</button></td></tr>`).join("")}</tbody></table></div>`:(apOpen?"":`<div class="muted">Aucune demande${mMonth?" ce mois-ci":""}. Touche « + Nouvelle demande » pour une demande de caisse ou de carte.</div>`)}
+  </div>`;
+}
+function bindApproCard(){
+  const tg=document.getElementById("apTog"); if(!tg) return;
+  tg.onclick=()=>{ apOpen=!apOpen; renderMissions(); if(apOpen) setTimeout(()=>{ const c=document.getElementById("apCard"); c&&c.scrollIntoView({block:"start"}); },50); };
+  const ty=document.getElementById("apType");
+  if(ty){ const upd=()=>{ document.getElementById("apCarteBox").style.display=ty.value==="Carte"?"":"none"; }; ty.onchange=upd; upd();
+    const mo=document.getElementById("apMont"); mo.oninput=()=>{ const n=num(mo.value); document.getElementById("apLet").textContent=n?("En lettres : "+enLettres(n)+" francs CFA"):""; };
+    document.getElementById("apAdd").onclick=()=>{ const a={id:uid("a"),type:val("apType"),date:val("apDate")||today(),montant:num(val("apMont")),carte:val("apType")==="Carte"?val("apCarte"):"",motif:val("apMotif"),createdAt:Date.now()};
+      if(!a.montant) return toast("Mets le montant demandé"); if(!a.motif) return toast("Indique le motif de la demande");
+      apOpen=false; saveA(a); toast("Demande enregistrée ✓"); exportAppro({createdBy:a.createdBy||(ME()&&ME().uid)},a); };
+  }
+  document.querySelectorAll("[data-appdf]").forEach(b=>b.onclick=()=>{ const a=appros.find(x=>x.id===b.dataset.appdf); if(a) exportAppro({createdBy:a.createdBy},a); });
+  document.querySelectorAll("[data-apdel]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm("Supprimer cette demande d'approvisionnement ?")) return; delA(b.dataset.apdel); });
 }
 
 function missionEditor(m){
