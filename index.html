@@ -1050,36 +1050,38 @@ function renderMissions(){
   S.querySelectorAll(".item").forEach(it=>it.onclick=()=>{ mOpen=it.dataset.id; renderMissions(); window.scrollTo(0,0); });
   bindApproCard();
 }
-let apOpen=false;
+let apOpen=false, apEdit=null, aEditId=null;
 function approCard(){
-  const p=profil||{}, L=[...appros].filter(a=>!mMonth||(a.date||"").startsWith(mMonth)).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const p=profil||{}, E=apEdit?appros.find(x=>x.id===apEdit)||null:null, L=[...appros].filter(a=>!mMonth||(a.date||"").startsWith(mMonth)).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   return `<div class="card" id="apCard">
     <div class="head"><h2>💰 Demandes d'approvisionnement</h2><button class="btn ${apOpen?"ghost":""} sm" id="apTog">${apOpen?"Fermer":"+ Nouvelle demande"}</button></div>
-    ${apOpen?`<div class="row">
-      <div><label>Approvisionnement de</label><select id="apType"><option selected>Caisse</option><option>Carte</option></select></div>
-      <div><label>Date</label><input type="date" id="apDate" value="${esc(today())}"></div></div>
-    <div class="row mt"><div><label>Montant (FCFA) *</label><input id="apMont" inputmode="numeric" placeholder="ex. 150000"></div>
-      <div id="apCarteBox" style="display:none"><label>N° de carte</label><input id="apCarte" value="${esc(p.carte||"")}"></div></div>
-    <div class="mt"><label>Numéro de dépôt</label><input id="apDepot" placeholder="ex. numéro du dépôt / de l'agence"></div>
-    <div class="mt"><label>Motif *</label><textarea id="apMotif" placeholder="ex. Frais de fonctionnement de la zone de Gagnoa pour décembre"></textarea></div>
+    ${apOpen?`${E?`<div class="muted" style="margin-bottom:8px">✏ Modification de la demande du ${fr(E.date)}</div>`:""}<div class="row">
+      <div><label>Approvisionnement de</label><select id="apType"><option ${!E||E.type==="Caisse"?"selected":""}>Caisse</option><option ${E&&E.type==="Carte"?"selected":""}>Carte</option></select></div>
+      <div><label>Date</label><input type="date" id="apDate" value="${esc(E?E.date:today())}"></div></div>
+    <div class="row mt"><div><label>Montant (FCFA) *</label><input id="apMont" inputmode="numeric" placeholder="ex. 150000" value="${esc(E&&E.montant?E.montant:"")}"></div>
+      <div id="apCarteBox" style="display:none"><label>N° de carte</label><input id="apCarte" value="${esc(E&&E.carte?E.carte:(p.carte||""))}"></div></div>
+    <div class="mt"><label>Numéro de dépôt</label><input id="apDepot" placeholder="ex. numéro du dépôt / de l'agence" value="${esc(E&&E.depot||"")}"></div>
+    <div class="mt"><label>Motif *</label><textarea id="apMotif" placeholder="ex. Frais de fonctionnement de la zone de Gagnoa pour décembre">${esc(E&&E.motif||"")}</textarea></div>
     <div id="apLet" class="muted mt"></div>
-    <div class="actions" style="margin-top:10px"><button class="btn" id="apAdd">✓ Créer et voir le PDF</button></div>`:""}
+    <div class="actions" style="margin-top:10px"><button class="btn" id="apAdd">${E?"✓ Enregistrer les modifications et voir le PDF":"✓ Créer et voir le PDF"}</button></div>`:""}
     ${L.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${L.map(a=>`<tr><td>${fr(a.date)}</td><td><b>${esc(a.type)}</b>${a.depot?` <span class="muted">· Dépôt ${esc(a.depot)}</span>`:""}<div class="muted">${esc((a.motif||"").slice(0,70))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
-      <td style="white-space:nowrap"><button class="btn sm" data-appdf="${esc(a.id)}">📤</button> <button class="btn ghost sm" data-apdel="${esc(a.id)}">🗑</button></td></tr>`).join("")}</tbody></table></div>`:(apOpen?"":`<div class="muted">Aucune demande${mMonth?" ce mois-ci":""}. Touche « + Nouvelle demande » pour une demande de caisse ou de carte.</div>`)}
+      <td style="white-space:nowrap"><button class="btn sm" data-appdf="${esc(a.id)}">📤</button> <button class="btn ghost sm" data-apedit="${esc(a.id)}" title="Modifier">✏</button> <button class="btn ghost sm" data-apdel="${esc(a.id)}">🗑</button></td></tr>`).join("")}</tbody></table></div>`:(apOpen?"":`<div class="muted">Aucune demande${mMonth?" ce mois-ci":""}. Touche « + Nouvelle demande » pour une demande de caisse ou de carte.</div>`)}
   </div>`;
 }
 function bindApproCard(){
   const tg=document.getElementById("apTog"); if(!tg) return;
-  tg.onclick=()=>{ apOpen=!apOpen; renderMissions(); if(apOpen) setTimeout(()=>{ const c=document.getElementById("apCard"); c&&c.scrollIntoView({block:"start"}); },50); };
+  tg.onclick=()=>{ apOpen=!apOpen; apEdit=null; renderMissions(); if(apOpen) setTimeout(()=>{ const c=document.getElementById("apCard"); c&&c.scrollIntoView({block:"start"}); },50); };
   const ty=document.getElementById("apType");
   if(ty){ const upd=()=>{ document.getElementById("apCarteBox").style.display=ty.value==="Carte"?"":"none"; }; ty.onchange=upd; upd();
-    const mo=document.getElementById("apMont"); mo.oninput=()=>{ const n=num(mo.value); document.getElementById("apLet").textContent=n?("En lettres : "+enLettres(n)+" francs CFA"):""; };
-    document.getElementById("apAdd").onclick=()=>{ const a={id:uid("a"),type:val("apType"),date:val("apDate")||today(),montant:num(val("apMont")),carte:val("apType")==="Carte"?val("apCarte"):"",depot:val("apDepot"),motif:val("apMotif"),createdAt:Date.now()};
+    const mo=document.getElementById("apMont"); mo.oninput=()=>{ const n=num(mo.value); document.getElementById("apLet").textContent=n?("En lettres : "+enLettres(n)+" francs CFA"):""; }; mo.oninput();
+    document.getElementById("apAdd").onclick=()=>{ const E=apEdit?appros.find(x=>x.id===apEdit):null; const a={...(E||{}),id:E?E.id:uid("a"),type:val("apType"),date:val("apDate")||today(),montant:num(val("apMont")),carte:val("apType")==="Carte"?val("apCarte"):"",depot:val("apDepot"),motif:val("apMotif"),createdAt:E&&E.createdAt||Date.now()};
       if(!a.montant) return toast("Mets le montant demandé"); if(!a.motif) return toast("Indique le motif de la demande");
-      apOpen=false; saveA(a); toast("Demande enregistrée ✓"); exportAppro({createdBy:a.createdBy||(ME()&&ME().uid)},a); };
+      if(E) a.modifieLe=today();
+      apOpen=false; apEdit=null; saveA(a); toast(E?"Demande modifiée ✓":"Demande enregistrée ✓"); exportAppro({createdBy:a.createdBy||(ME()&&ME().uid)},a); };
   }
   document.querySelectorAll("[data-appdf]").forEach(b=>b.onclick=()=>{ const a=appros.find(x=>x.id===b.dataset.appdf); if(a) exportAppro({createdBy:a.createdBy},a); });
-  document.querySelectorAll("[data-apdel]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm("Supprimer cette demande d'approvisionnement ?")) return; delA(b.dataset.apdel); });
+  document.querySelectorAll("[data-apedit]").forEach(b=>b.onclick=()=>{ apEdit=b.dataset.apedit; apOpen=true; renderMissions(); setTimeout(()=>{ const c=document.getElementById("apCard"); c&&c.scrollIntoView({block:"start"}); },50); });
+  document.querySelectorAll("[data-apdel]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm("Supprimer cette demande d'approvisionnement ?")) return; if(apEdit===b.dataset.apdel){ apEdit=null; apOpen=false; } delA(b.dataset.apdel); });
 }
 
 function missionEditor(m){
@@ -1196,9 +1198,9 @@ function renderMissionDetail(){
     <div class="row mt"><div><label>Montant (FCFA) *</label><input id="aMont" inputmode="numeric"></div><div><label>N° de carte</label><input id="aCarte" value="${esc(p.carte||"")}"></div></div>
     <div class="mt"><label>Numéro de dépôt</label><input id="aDepot"></div>
     <div class="mt"><label>Motif</label><textarea id="aMotif" placeholder="ex. Carburant pour la mission de formation à Sinfra">${esc("")}</textarea></div>
-    <div class="actions" style="margin-top:10px"><button class="btn" id="aAdd">+ Créer la demande</button></div>
+    <div class="actions" style="margin-top:10px"><button class="btn" id="aAdd">+ Créer la demande</button><button class="btn ghost" id="aCancel" style="display:none">Annuler</button></div>
     ${appros.length?`<div class="scroll" style="margin-top:12px"><table><tbody>${appros.map(a=>`<tr><td>${fr(a.date)}</td><td>${esc(a.type)}<div class="muted">${esc((a.motif||"").slice(0,60))}</div></td><td style="text-align:right;white-space:nowrap">${money(a.montant)}</td>
-      <td style="width:46px"><button class="btn sm" data-apdf="${esc(a.id)}" title="Envoyer la demande">📤</button></td><td style="width:24px"><button class="x" data-aid="${esc(a.id)}">×</button></td></tr>`).join("")}</tbody></table></div>`:""}
+      <td style="width:46px"><button class="btn sm" data-apdf="${esc(a.id)}" title="Envoyer la demande">📤</button></td><td style="width:40px"><button class="btn ghost sm" data-aedit="${esc(a.id)}" title="Modifier">✏</button></td><td style="width:24px"><button class="x" data-aid="${esc(a.id)}">×</button></td></tr>`).join("")}</tbody></table></div>`:""}
   </div>
   <div class="card"><div class="head"><h2>Rapport</h2></div><div class="kv">
     <b>Objectifs</b><span style="white-space:pre-wrap">${esc(m.objectifs||"—")}</span>
@@ -1233,10 +1235,18 @@ function renderMissionDetail(){
     if(!await askConfirm(`Supprimer cette dépense de ${money(d.montant)} et son justificatif ?`)) return;
     for(const ph of rc(d.id)) await delPhoto(ph);
     saveM({...m,depenses:(m.depenses||[]).filter(x=>x.id!==d.id)}); });
-  $("#aAdd").onclick=()=>{ const a={id:uid("a"),type:val("aType"),date:val("aDate"),montant:num(val("aMont")),carte:val("aCarte"),depot:val("aDepot"),motif:val("aMotif")};
+  const aSetEdit=a=>{ aEditId=a?a.id:null; $("#aAdd").textContent=a?"✓ Enregistrer les modifications":"+ Créer la demande"; $("#aCancel").style.display=a?"":"none";
+    if(a){ $("#aType").value=a.type||"Carte"; $("#aDate").value=a.date||today(); $("#aMont").value=a.montant||""; $("#aCarte").value=a.carte||""; $("#aDepot").value=a.depot||""; $("#aMotif").value=a.motif||""; $("#aType").scrollIntoView({block:"center"}); }
+    else ["aMont","aMotif","aDepot"].forEach(id=>document.getElementById(id).value=""); };
+  if(aEditId && (m.appros||[]).some(x=>x.id===aEditId)){ $("#aAdd").textContent="✓ Enregistrer les modifications"; $("#aCancel").style.display=""; } else aEditId=null;
+  $("#aCancel").onclick=()=>aSetEdit(null);
+  S.querySelectorAll("[data-aedit]").forEach(b=>b.onclick=()=>{ const a=(m.appros||[]).find(x=>x.id===b.dataset.aedit); if(a) aSetEdit(a); });
+  $("#aAdd").onclick=()=>{ const old=aEditId?(m.appros||[]).find(x=>x.id===aEditId):null;
+    const a={...(old||{}),id:old?old.id:uid("a"),type:val("aType"),date:val("aDate"),montant:num(val("aMont")),carte:val("aCarte"),depot:val("aDepot"),motif:val("aMotif")};
     if(!a.montant) return toast("Mets le montant demandé");
-    ["aMont","aMotif","aDepot"].forEach(id=>document.getElementById(id).value="");
-    saveM({...m,appros:[...(m.appros||[]),a]}); toast("Demande créée — touche 📄 pour l'imprimer"); };
+    aSetEdit(null);
+    if(old){ saveM({...m,appros:(m.appros||[]).map(x=>x.id===old.id?a:x)}); toast("Demande modifiée ✓ — touche 📤 pour la renvoyer"); }
+    else { saveM({...m,appros:[...(m.appros||[]),a]}); toast("Demande créée — touche 📤 pour l'envoyer"); } };
   S.querySelectorAll("[data-apdf]").forEach(b=>b.onclick=()=>{ const a=appros.find(x=>x.id===b.dataset.apdf); exportAppro(m,a); });
   S.querySelectorAll("[data-aid]").forEach(b=>b.onclick=async()=>{ if(!await askConfirm("Supprimer cette demande d'approvisionnement ?")) return; saveM({...m,appros:(m.appros||[]).filter(x=>x.id!==b.dataset.aid)}); });
 }
